@@ -73,6 +73,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
     ├── networking.nix   # networkd + nftables firewall
     ├── auto-upgrade.nix  # unattended updates
     ├── upgrade-alert.nix # ntfy alert when auto-upgrade fails
+    ├── wireguard.nix     # WireGuard VPN into the home LAN (wg0, NAT)
     └── services/
         └── ntfy.nix      # ntfy server, localhost-only; all ntfy users and ACLs
 ```
@@ -90,7 +91,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
    - AMD microcode and `hardware.enableRedistributableFirmware`.
 4. **Networking:**
    - `systemd-networkd` with DHCP on the wired NIC (match by MAC or `en*`).
-   - nftables firewall enabled; only TCP 22 open.
+   - nftables firewall enabled; only TCP 22 open (UDP 51820 for WireGuard was added later).
 5. **Users:**
    - `users.mutableUsers = false`.
    - One admin user `<ADMIN_USER>` in `wheel`, authenticated with `<ADMIN_SSH_PUBKEY>`.
@@ -160,6 +161,9 @@ nix flake update nixpkgs   # bump nixpkgs pin
 - **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. `<ADMIN_SSH_PUBKEY>` is still a placeholder.
 - **Secrets:** sops-nix (added as a flake input, since nixpkgs has no module that decrypts repo-committed secrets). Operator age key lives on the workstation at `~/.config/sops/age/keys.txt`.
 - **ntfy:** native `services.ntfy-sh`, localhost-only on `127.0.0.1:2586`, `deny-all` by default with declarative users/tokens from sops. One identity so far: `upgrade-notifier`, write-only on `arbiter-alerts`. Exposing it (reverse proxy, real `base-url`, iOS upstream) is still open.
+- **WireGuard:** terminated on ARBITER (`modules/wireguard.nix`), UDP 51820, tunnel `10.100.0.0/24` with ARBITER `.1`, iPhone `.2`, laptop `.3`, per-peer preshared keys in sops. Peers reach the whole home LAN masqueraded as ARBITER; the forward chain drops anything from `wg0` that isn't RFC 1918, and LAN hosts can't open connections into the VPN.
+  - Built as a raw networkd netdev with `PrivateKeyFile=`, not `networking.wireguard`: that backend passes keys to systemd-networkd via `LoadCredential`, so a missing secret would stop networkd and cut SSH. Keep it that way.
+  - Outside this repo: UniFi port forward UDP 51820 → ARBITER, and a public address or DDNS name for clients' `Endpoint`.
 - **Formatter:** `nixfmt-tree` (nixfmt's own `nix fmt` wrapper) with `tree-root-file = "flake.nix"` so it never walks outside the repo.
 
 ## Open decisions (ask the user; don't choose silently)
@@ -175,14 +179,13 @@ nix flake update nixpkgs   # bump nixpkgs pin
    - Default suggestion: (b) until (a) is set up.
 4. **sudo password.** Either a yescrypt hash in the repo (`mkpasswd -m yescrypt`, private repo only; moves to the secrets tool later), or passwordless wheel since SSH is key-only.
 5. **VLAN and DHCP reservation** for ARBITER in UniFi.
-6. **Values for the placeholders:** `<ADMIN_SSH_PUBKEY>`, `<DISK_ID>`.
+6. **Values for the placeholders:** `<ADMIN_SSH_PUBKEY>`, `<DISK_ID>`, `<IPHONE_WG_PUBKEY>`, `<LAPTOP_WG_PUBKEY>`.
 7. **Exposing ntfy:** reverse proxy (not nginx), hostname and TLS, and whether to set `upstream-base-url = "https://ntfy.sh"` for instant iOS push (ntfy.sh then sees message IDs, not content). Then a read-only phone user on `arbiter-alerts`.
 
 ## Later phases (context only; do not implement until asked)
 
 These need decisions of their own first:
 
-- VPN (Netbird, Tailscale, Headscale or WireGuard)
 - Reverse proxy (not nginx)
 - NAS mounts
 - Backups to the NAS

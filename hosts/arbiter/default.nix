@@ -9,6 +9,7 @@
     ../../modules/networking.nix
     ../../modules/auto-upgrade.nix
     ../../modules/upgrade-alert.nix
+    ../../modules/wireguard.nix
     ../../modules/services/ntfy.nix
   ];
 
