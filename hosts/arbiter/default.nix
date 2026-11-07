@@ -8,9 +8,14 @@
     ../../modules/ssh.nix
     ../../modules/networking.nix
     ../../modules/auto-upgrade.nix
+    ../../modules/upgrade-alert.nix
+    ../../modules/services/ntfy.nix
   ];
 
   networking.hostName = "arbiter";
+
+  # Encrypted with sops; decrypted at activation with the SSH host key.
+  sops.defaultSopsFile = ./secrets.yaml;
 
   homelab.admin = {
     name = "admin";

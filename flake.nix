@@ -7,6 +7,11 @@
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # nixpkgs has no module for decrypting repo-committed secrets at activation.
+    sops-nix = {
+      url = "github:Mic92/sops-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -14,6 +19,7 @@
       self,
       nixpkgs,
       disko,
+      sops-nix,
     }:
     {
       nixosConfigurations.arbiter = nixpkgs.lib.nixosSystem {
@@ -21,6 +27,7 @@
         specialArgs = { inherit self; };
         modules = [
           disko.nixosModules.disko
+          sops-nix.nixosModules.sops
           ./hosts/arbiter
         ];
       };
