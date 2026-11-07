@@ -18,7 +18,9 @@
     # --upgrade only refreshes channels, which are disabled.
     upgrade = false;
 
-    dates = "03:15";
+    # Weekly trades a few days of security-fix latency for less churn; stable
+    # kernels bump about weekly, so reboots happen at most this often anyway.
+    dates = "Sun 03:15";
     randomizedDelaySec = "30min";
     allowReboot = true;
     # Kernel/initrd changes only reboot inside this window; a run outside it

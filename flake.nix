@@ -3,9 +3,8 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    # Pinned to a release tag rather than master to limit what an update can pull in.
     disko = {
-      url = "github:nix-community/disko/v1.13.0";
+      url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

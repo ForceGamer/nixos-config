@@ -104,7 +104,7 @@ Add a `modules/services/` directory when the first service arrives, not before.
    - Automatic store optimisation.
    - Disable channels (`nix.channel.enable = false`); the system is flake-only.
 9. **Auto-upgrade:**
-   - `system.autoUpgrade` runs nightly, with `allowReboot = true` and a reboot window of roughly 03:00–05:00 so kernel fixes actually apply.
+   - `system.autoUpgrade` runs weekly (Sunday 03:15), with `allowReboot = true` and a reboot window of roughly 03:00–05:00 so kernel fixes actually apply.
    - Where it gets new nixpkgs revisions from is an open decision.
 10. **Base:**
     - `time.timeZone = "Europe/Oslo"`, `i18n.defaultLocale = "en_US.UTF-8"`, console keymap `no`.
@@ -147,7 +147,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
 ## Decisions made
 
 - **Filesystem:** ext4, no encryption (unattended auto-upgrade reboots must come back without intervention). Which disk(s) to wipe is still open (see 1).
-- **Updates:** option (b). `modules/auto-upgrade.nix` rebuilds the deployed source (`self`, in the store) with `--override-input nixpkgs github:NixOS/nixpkgs/nixos-26.05`. Keep that URL in sync with `flake.nix`.
+- **Updates:** option (b). `modules/auto-upgrade.nix` rebuilds the deployed source (`self`, in the store) with `--override-input nixpkgs github:NixOS/nixpkgs/nixos-26.05`. Keep that URL in sync with `flake.nix`. Runs weekly (Sunday 03:15) rather than nightly: less churn, at the cost of up to a week of security-fix latency.
 - **sudo:** passwordless wheel (`wheelNeedsPassword = false`), since SSH is key-only.
 - **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. `<ADMIN_SSH_PUBKEY>` is still a placeholder.
 - **Formatter:** `nixfmt-tree` (nixfmt's own `nix fmt` wrapper) with `tree-root-file = "flake.nix"` so it never walks outside the repo.
