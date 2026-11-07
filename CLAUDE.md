@@ -111,7 +111,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
    - `system.autoUpgrade` runs weekly (Sunday 03:15), with `allowReboot = true` and a reboot window of roughly 03:00–05:00 so kernel fixes actually apply.
    - Where it gets new nixpkgs revisions from is an open decision.
 10. **Base:**
-    - `time.timeZone = "Europe/Oslo"`, `i18n.defaultLocale = "en_US.UTF-8"`, console keymap `no`.
+    - `time.timeZone = "Europe/Oslo"`, `i18n.defaultLocale = "en_GB.UTF-8"` (English with non-US date and number formats), console keymap `no`.
     - Default timesyncd.
     - journald `SystemMaxUse=1G`.
     - Only a handful of system packages (e.g. `git`, `htop`, `smartmontools`).

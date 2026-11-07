@@ -1,7 +1,8 @@
 { pkgs, ... }:
 {
   time.timeZone = "Europe/Oslo";
-  i18n.defaultLocale = "en_US.UTF-8";
+  # English, but with day-month dates and other non-US formats.
+  i18n.defaultLocale = "en_GB.UTF-8";
   console.keyMap = "no";
 
   services.journald.extraConfig = ''
