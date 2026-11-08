@@ -1,4 +1,4 @@
-# Proprietary NVIDIA driver for ARBITER's GTX 1080 Ti (Pascal), headless.
+# Proprietary NVIDIA driver for ARBITER's GTX 980 Ti (Maxwell), headless.
 # No X server: putting "nvidia" in videoDrivers is just how the nixpkgs module
 # is switched on; services.xserver itself stays disabled.
 { lib, ... }:

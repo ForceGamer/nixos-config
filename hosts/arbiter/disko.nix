@@ -5,8 +5,7 @@
   disko.devices.disk.main = {
     type = "disk";
     # by-id is stable across reboots and controller ordering, unlike
-    # /dev/nvmeXnY. Taken from Proxmox; re-check it from the NixOS installer
-    # before running disko.
+    # /dev/nvmeXnY. ARBITER's only disk.
     device = "/dev/disk/by-id/nvme-Samsung_SSD_980_PRO_with_Heatsink_1TB_S6WSNS0W619318E";
     content = {
       type = "gpt";

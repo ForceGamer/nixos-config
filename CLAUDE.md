@@ -1,6 +1,6 @@
 # Homelab NixOS configuration
 
-Flake-based NixOS configuration for all of the user's NixOS devices, starting with the homelab. **Current scope: ARBITER only, phase 1 (essentials).** The structure should allow more hosts later, but don't build for them now.
+Flake-based NixOS configuration for all of the user's NixOS devices, starting with the homelab. **Current scope: ARBITER only.** It is installed and running phase 1 (essentials) plus ntfy, WireGuard and the Claude Code microVM. The structure should allow more hosts later, but don't build for them now.
 
 ## Priorities (in order; use them to break ties)
 
@@ -25,9 +25,9 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 
 ### ARBITER (`nixosConfigurations.arbiter`, `networking.hostName = "arbiter"`)
 
-- **Hardware:** AMD Ryzen, 64 GB RAM, NVIDIA GTX 1080 Ti (Pascal). Wired Ethernet.
-- **Currently runs Proxmox,** which will be wiped and replaced by NixOS. The old Home Assistant VM on it is not needed. Confirm with the user that nothing else on it needs backing up before any destructive step.
-- **Future role:** main service host. Phase 1 does not include any services.
+- **Hardware:** AMD Ryzen, 64 GB RAM, NVIDIA GTX 980 Ti (Maxwell). Wired Ethernet. One disk: a 1 TB Samsung 980 PRO NVMe.
+- **Installed** on 2026-11-08 from the NixOS 26.05 ISO, replacing Proxmox. Its address comes from an existing UniFi DHCP reservation.
+- **Role:** main service host. Services are added in later phases, one at a time.
 - **GPU:** proprietary driver, headless (see Decisions made).
 
 ## Rules
@@ -87,7 +87,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
    - Inputs `nixpkgs` (nixos-26.05) and `disko`.
    - One output, `nixosConfigurations.arbiter`.
    - A `formatter` output pointing to `nixfmt`.
-2. **Disks:** `disko.nix` with an EFI system partition plus root. Disk IDs come from `/dev/disk/by-id` (see open decisions).
+2. **Disks:** `disko.nix` with an EFI system partition plus root. Disk IDs come from `/dev/disk/by-id`.
 3. **Boot:**
    - systemd-boot, EFI, `configurationLimit = 10`.
    - Default (LTS) kernel.
@@ -102,7 +102,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 6. **SSH:**
    - Key-only: `PasswordAuthentication = false`, `KbdInteractiveAuthentication = false`.
    - `PermitRootLogin = "no"`, `AllowUsers` set to the admin, X11 forwarding off.
-7. **sudo:** `security.sudo.execWheelOnly = true`. Whether wheel needs a password is an open decision.
+7. **sudo:** `security.sudo.execWheelOnly = true`. Passwordless wheel (see Decisions made).
 8. **Nix:**
    - Flakes enabled.
    - `allowed-users = [ "@wheel" ]`.
@@ -112,7 +112,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
    - Disable channels (`nix.channel.enable = false`); the system is flake-only.
 9. **Auto-upgrade:**
    - `system.autoUpgrade` runs weekly (Sunday 03:15), with `allowReboot = true` and a reboot window of roughly 03:00–05:00 so kernel fixes actually apply.
-   - Where it gets new nixpkgs revisions from is an open decision.
+   - New nixpkgs revisions come from option (b) (see Decisions made).
 10. **Base:**
     - `time.timeZone = "Europe/Oslo"`, `i18n.defaultLocale = "en_GB.UTF-8"` (English with non-US date and number formats), console keymap `no`.
     - Default timesyncd.
@@ -121,10 +121,12 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 
 **Out of scope for phase 1:** all services, VPN, NAS mounts, backups, monitoring, intrusion detection, GPU drivers, secrets management, and VLAN-specific config.
 
-## First install procedure (needs user approval at each destructive step)
+## Install procedure (needs user approval at each destructive step)
 
-1. Confirm nothing on the Proxmox install still needs to be kept.
-2. Boot the official NixOS 26.05 minimal ISO and verify its checksum. Set a temporary password for the `nixos` user, then SSH in from the workstation.
+Used for the first install; kept for reinstalls. A reinstall wipes the disk, so confirm with the user that nothing on it needs keeping.
+
+1. Confirm nothing on the existing install still needs to be kept.
+2. Boot the official NixOS 26.05 minimal ISO and verify its checksum. Set a temporary password (`sudo passwd` for root was used the first time), then SSH in from the workstation.
 3. Collect hardware facts:
    - `ls -l /dev/disk/by-id`
    - `ip link` (MAC address for the UniFi DHCP reservation)
@@ -132,10 +134,10 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 4. Fill in `disko.nix`. Run disko from the pinned flake input (check the current `--mode` names for that disko version), which partitions and mounts `/mnt`.
 5. Give ARBITER its SSH host key before install, so it can decrypt secrets on first boot:
    - On the installer: `mkdir -p /mnt/etc/ssh && ssh-keygen -t ed25519 -N "" -f /mnt/etc/ssh/ssh_host_ed25519_key`.
-   - On the workstation: convert its public key with `nix run --inputs-from . nixpkgs#ssh-to-age`, add it as `&arbiter` to `.sops.yaml`, run `sops updatekeys hosts/arbiter/secrets.yaml`, and commit.
+   - On the workstation: convert its public key with `nix run --inputs-from . nixpkgs#ssh-to-age`, add it as `&arbiter` to `.sops.yaml` (replacing the old one on a reinstall), run `sops updatekeys hosts/arbiter/secrets.yaml`, and commit.
    - If this is skipped, ntfy can't start (its env file is missing); everything else still works.
    - Then run `nixos-install --flake .#arbiter --no-root-passwd`.
-6. Reboot, remove the ISO, and verify SSH key login, sudo, firewall (`nft list ruleset`), and timers (`systemctl list-timers`).
+6. Reboot, remove the ISO, clear the installer's entry from `known_hosts`, and verify SSH key login, sudo, `systemctl --failed`, firewall (`nft list ruleset`), timers (`systemctl list-timers`), `nvidia-smi`, and the microVM.
 
 nixos-anywhere is intentionally not used, to avoid an extra tool. Suggest it only if the ISO route causes problems.
 
@@ -158,8 +160,8 @@ nix flake update nixpkgs   # bump nixpkgs pin
 
 ## Decisions made
 
-- **NVIDIA:** `modules/nvidia.nix`, proprietary closed modules from the `legacy_580` branch. The default branch (595+) dropped Pascal; 580 is supported until August 2028, after which the card needs replacing or stays on an unpatched driver. Headless: `videoDrivers` only switches the module on, no X server. `nvidia-persistenced` keeps the idle GPU in a low power state. Unfree is allowed only for the driver packages by name. The nixpkgs module makes `/dev/nvidia*` world-accessible (mode 666), so any local user or unsandboxed service can use the GPU; restrict services with `DeviceAllow`/`PrivateDevices` as needed. cache.nixos.org doesn't serve unfree builds, so the driver and its kernel module are compiled locally, including on ARBITER after each kernel bump. Check it after install with `nvidia-smi`.
-- **Filesystem:** ext4, no encryption (unattended auto-upgrade reboots must come back without intervention). Root disk is the 1 TB Samsung 980 PRO NVMe (ID in `disko.nix`); whether any other disks exist or should be wiped is still open (see 1).
+- **NVIDIA:** `modules/nvidia.nix`, proprietary closed modules from the `legacy_580` branch. The default branch (595+) dropped Maxwell; 580 is supported until August 2028, after which the card needs replacing or stays on an unpatched driver. Headless: `videoDrivers` only switches the module on, no X server. `nvidia-persistenced` keeps the idle GPU in a low power state. Unfree is allowed only for the driver packages by name. The nixpkgs module makes `/dev/nvidia*` world-accessible (mode 666), so any local user or unsandboxed service can use the GPU; restrict services with `DeviceAllow`/`PrivateDevices` as needed. cache.nixos.org doesn't serve unfree builds, so the driver and its kernel module are compiled locally, including on ARBITER after each kernel bump. Verified with `nvidia-smi` after install.
+- **Filesystem:** ext4, no encryption (unattended auto-upgrade reboots must come back without intervention). Root disk is the 1 TB Samsung 980 PRO NVMe (ID in `disko.nix`), ARBITER's only disk. Bulk data will live on the NAS.
 - **Updates:** option (b). `modules/auto-upgrade.nix` rebuilds the deployed source (`self`, in the store) with `--override-input nixpkgs github:NixOS/nixpkgs/nixos-26.05`. Keep that URL in sync with `flake.nix`. Runs weekly (Sunday 03:15) rather than nightly: less churn, at the cost of up to a week of security-fix latency.
 - **sudo:** passwordless wheel (`wheelNeedsPassword = false`), since SSH is key-only.
 - **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. Authenticated by TEMPLAR's ed25519 key (`templar`), which also reaches the Claude microVM.
@@ -182,19 +184,10 @@ nix flake update nixpkgs   # bump nixpkgs pin
 
 ## Open decisions (ask the user; don't choose silently)
 
-1. **Disks and filesystem.**
-   - Which disks are in ARBITER, and should all of them be wiped?
-   - Filesystem: ext4 (lowest maintenance) or btrfs (snapshots)?
-   - Encryption: none, LUKS with TPM2 auto-unlock (`systemd-cryptenroll`), or LUKS with SSH unlock in the initrd?
-2. **Where the repo lives:** decided, private GitHub (see above). Still open: if update option (a) is adopted, ARBITER needs a read-only deploy key, generated on the host and never committed.
-3. **How updates reach ARBITER:**
-   - **(a)** A scheduled CI job bumps `flake.lock` and checks the build; ARBITER's autoUpgrade pulls the repo. Fully declarative, but needs repo hosting and CI.
-   - **(b)** ARBITER bumps its own `nixpkgs` input on each autoUpgrade. Simplest and timely, but the running system drifts from the committed lock.
-   - Default suggestion: (b) until (a) is set up.
-4. **sudo password.** Either a yescrypt hash in the repo (`mkpasswd -m yescrypt`, private repo only; moves to the secrets tool later), or passwordless wheel since SSH is key-only.
-5. **VLAN and DHCP reservation** for ARBITER in UniFi.
-6. **Values for the placeholders:** `<IPHONE_WG_PUBKEY>`, `<LAPTOP_WG_PUBKEY>`.
-7. **Exposing ntfy:** reverse proxy (not nginx), hostname and TLS, and whether to set `upstream-base-url = "https://ntfy.sh"` for instant iOS push (ntfy.sh then sees message IDs, not content). Then a read-only phone user on `arbiter-alerts`.
+1. **Moving updates to option (a):** a scheduled CI job bumps `flake.lock` and checks the build, and ARBITER's autoUpgrade pulls the repo. Fully declarative, unlike the current option (b), where the running system drifts from the committed lock. Needs CI, and a read-only deploy key generated on ARBITER and never committed.
+2. **VLAN:** ARBITER has a UniFi DHCP reservation; whether to move it to a dedicated server VLAN.
+3. **Values for the placeholders:** `<IPHONE_WG_PUBKEY>`, `<LAPTOP_WG_PUBKEY>`.
+4. **Exposing ntfy:** reverse proxy (not nginx), hostname and TLS, and whether to set `upstream-base-url = "https://ntfy.sh"` for instant iOS push (ntfy.sh then sees message IDs, not content). Then a read-only phone user on `arbiter-alerts`.
 
 ## Later phases (context only; do not implement until asked)
 
@@ -205,7 +198,7 @@ These need decisions of their own first:
 - Backups to the NAS
 - Monitoring and alerting
 - Intrusion detection
-- Notifications to iOS (ntfy runs; exposing it to the phone is open decision 7)
+- Notifications to iOS (ntfy runs; exposing it to the phone is open decision 4)
 - Seafile, Immich, Paperless (data on the NAS)
 - Plex under strict least privilege
 - A calendar server
