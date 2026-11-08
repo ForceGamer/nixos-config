@@ -73,6 +73,30 @@
   users.users.claude = {
     isNormalUser = true;
     openssh.authorizedKeys.keys = adminKeys;
+    # Start claude's user services at boot, without anyone logged in.
+    linger = true;
+  };
+
+  # Claude Code's Remote Control server, so new sessions can be started on the
+  # VM from the desktop app, claude.ai or the phone without SSH. Outbound HTTPS
+  # only. Skipped until Claude Code is installed in ~/.local/bin. Before first
+  # use, run `claude remote-control` once interactively in ~/src to accept the
+  # workspace-trust and enable prompts; until then this fails and retries.
+  systemd.user.services.claude-remote-control = {
+    description = "Claude Code Remote Control server";
+    wantedBy = [ "default.target" ];
+    unitConfig = {
+      ConditionUser = "claude";
+      ConditionPathExists = "%h/.local/bin/claude";
+    };
+    serviceConfig = {
+      # A login shell gives sessions the same environment as an SSH login:
+      # system PATH, ~/.local/bin and nix-ld's variables from /etc/profile.
+      ExecStart = "${pkgs.bash}/bin/bash -lc 'mkdir -p ~/src && cd ~/src && exec claude remote-control --name claude-vm --spawn same-dir'";
+      # Also covers network not yet up at boot and exits after self-updates.
+      Restart = "always";
+      RestartSec = "1min";
+    };
   };
 
   services.openssh = {
