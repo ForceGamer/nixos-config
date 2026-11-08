@@ -21,7 +21,9 @@
 
   homelab.admin = {
     name = "admin";
-    sshKeys = [ "<ADMIN_SSH_PUBKEY>" ];
+    sshKeys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEipz/4NceWoq5jFiUcOAeNWm+ZRRX02GmDIEw10I2IA templar"
+    ];
   };
 
   boot.loader = {

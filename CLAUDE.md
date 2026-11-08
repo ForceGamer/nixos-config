@@ -14,7 +14,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 
 ## Environment
 
-- **Operator workstation:** Kubuntu with Nix (flakes enabled), editing in Zed with nixd and nil.
+- **Operator workstation (TEMPLAR):** Kubuntu with Nix (flakes enabled), editing in Zed with nixd and nil.
 - `nixos-rebuild` is not installed on the workstation. Use `nix run nixpkgs#nixos-rebuild -- …`.
 - **Network:** a UniFi Dream Router 7 handles DHCP, DNS and VLANs. Host addressing is done with DHCP reservations in UniFi, not static IPs in Nix (one source of truth).
 - **Other devices** (not managed by this repo):
@@ -160,7 +160,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
 - **Filesystem:** ext4, no encryption (unattended auto-upgrade reboots must come back without intervention). Root disk is the 1 TB Samsung 980 PRO NVMe (ID in `disko.nix`); whether any other disks exist or should be wiped is still open (see 1).
 - **Updates:** option (b). `modules/auto-upgrade.nix` rebuilds the deployed source (`self`, in the store) with `--override-input nixpkgs github:NixOS/nixpkgs/nixos-26.05`. Keep that URL in sync with `flake.nix`. Runs weekly (Sunday 03:15) rather than nightly: less churn, at the cost of up to a week of security-fix latency.
 - **sudo:** passwordless wheel (`wheelNeedsPassword = false`), since SSH is key-only.
-- **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. `<ADMIN_SSH_PUBKEY>` is still a placeholder.
+- **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. Authenticated by TEMPLAR's ed25519 key (`templar`), which also reaches the Claude microVM.
 - **Secrets:** sops-nix (added as a flake input, since nixpkgs has no module that decrypts repo-committed secrets). Operator age key lives on the workstation at `~/.config/sops/age/keys.txt`.
 - **ntfy:** native `services.ntfy-sh`, localhost-only on `127.0.0.1:2586`, `deny-all` by default with declarative users/tokens from sops. One identity so far: `upgrade-notifier`, write-only on `arbiter-alerts`. Exposing it (reverse proxy, real `base-url`, iOS upstream) is still open.
 - **WireGuard:** terminated on ARBITER (`modules/wireguard.nix`), UDP 51820, tunnel `10.100.0.0/24` with ARBITER `.1`, iPhone `.2`, laptop `.3`, per-peer preshared keys in sops. Peers reach the whole home LAN masqueraded as ARBITER; the forward chain drops anything from `wg0` that isn't RFC 1918, and LAN hosts can't open connections into the VPN.
@@ -191,7 +191,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
    - Default suggestion: (b) until (a) is set up.
 4. **sudo password.** Either a yescrypt hash in the repo (`mkpasswd -m yescrypt`, private repo only; moves to the secrets tool later), or passwordless wheel since SSH is key-only.
 5. **VLAN and DHCP reservation** for ARBITER in UniFi.
-6. **Values for the placeholders:** `<ADMIN_SSH_PUBKEY>`, `<IPHONE_WG_PUBKEY>`, `<LAPTOP_WG_PUBKEY>`.
+6. **Values for the placeholders:** `<IPHONE_WG_PUBKEY>`, `<LAPTOP_WG_PUBKEY>`.
 7. **Exposing ntfy:** reverse proxy (not nginx), hostname and TLS, and whether to set `upstream-base-url = "https://ntfy.sh"` for instant iOS push (ntfy.sh then sees message IDs, not content). Then a read-only phone user on `arbiter-alerts`.
 
 ## Later phases (context only; do not implement until asked)
