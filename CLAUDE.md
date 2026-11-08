@@ -1,6 +1,6 @@
 # Homelab NixOS configuration
 
-Flake-based NixOS configuration for the homelab. **Current scope: ARBITER only, phase 1 (essentials).** The structure should allow more hosts later, but don't build for them now.
+Flake-based NixOS configuration for all of the user's NixOS devices, starting with the homelab. **Current scope: ARBITER only, phase 1 (essentials).** The structure should allow more hosts later, but don't build for them now.
 
 ## Priorities (in order; use them to break ties)
 
@@ -175,6 +175,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
   - The VM restarts when its config changes (so on weekly upgrades that touch it).
   - Testing: the Nix build sandbox here has no `/dev/kvm`, so NixOS VM tests run under TCG and a nested microVM is far too slow to boot. Test host-side rules with a network namespace on a veth named `vm-claude`, and the guest by building `microvm.vms.claude.config.config.microvm.declaredRunner` with user-mode networking and running it directly as the user (who has KVM).
   - Never give the QEMU guest exactly 2048 MB of memory; it hangs at boot (microvm.nix issue 171).
+- **Repo:** private GitHub repo `nixos-config` (`origin`). The workstation checkout is the only place the config is edited; push after committing. Commits use the GitHub noreply email (set in this repo's `.git/config`).
 - **Formatter:** `nixfmt-tree` (nixfmt's own `nix fmt` wrapper) with `tree-root-file = "flake.nix"` so it never walks outside the repo.
 
 ## Open decisions (ask the user; don't choose silently)
@@ -183,7 +184,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
    - Which disks are in ARBITER, and should all of them be wiped?
    - Filesystem: ext4 (lowest maintenance) or btrfs (snapshots)?
    - Encryption: none, LUKS with TPM2 auto-unlock (`systemd-cryptenroll`), or LUKS with SSH unlock in the initrd?
-2. **Where the repo lives** (private GitHub, self-hosted Forgejo, …). A private remote means ARBITER needs a read-only deploy key, generated on the host and never committed.
+2. **Where the repo lives:** decided, private GitHub (see above). Still open: if update option (a) is adopted, ARBITER needs a read-only deploy key, generated on the host and never committed.
 3. **How updates reach ARBITER:**
    - **(a)** A scheduled CI job bumps `flake.lock` and checks the build; ARBITER's autoUpgrade pulls the repo. Fully declarative, but needs repo hosting and CI.
    - **(b)** ARBITER bumps its own `nixpkgs` input on each autoUpgrade. Simplest and timely, but the running system drifts from the committed lock.
