@@ -10,6 +10,7 @@
     ../../modules/auto-upgrade.nix
     ../../modules/upgrade-alert.nix
     ../../modules/wireguard.nix
+    ../../modules/claude-vm.nix
     ../../modules/services/ntfy.nix
   ];
 

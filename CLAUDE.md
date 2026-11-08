@@ -33,7 +33,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 ## Rules
 
 - **nixpkgs:** stable channel only, currently `nixos-26.05` (EOL 2026-12-31). Moving to 26.11 is its own change: read the release notes first. Never use unstable on servers unless the user asks.
-- **Flake inputs:** only `nixpkgs`, `disko` and `sops-nix`. Ask before adding any input, and explain why a nixpkgs module can't do the job. Make every input follow `nixpkgs` where possible.
+- **Flake inputs:** only `nixpkgs`, `disko`, `sops-nix` and `microvm`. Ask before adding any input, and explain why a nixpkgs module can't do the job. Make every input follow `nixpkgs` where possible.
 - **Verify options against the pinned nixpkgs, not memory.** Options get renamed and removed between releases. Check with `nix eval`, the module source in the pinned nixpkgs, or search.nixos.org set to the matching release.
 - **Services (later phases):**
   - Prefer native NixOS modules.
@@ -74,6 +74,8 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
     ├── auto-upgrade.nix  # unattended updates
     ├── upgrade-alert.nix # ntfy alert when auto-upgrade fails
     ├── wireguard.nix     # WireGuard VPN into the home LAN (wg0, NAT)
+    ├── claude-vm.nix     # host side of the Claude Code microVM (tap, NAT, firewall)
+    ├── claude-vm-guest.nix # the microVM's own NixOS config
     └── services/
         └── ntfy.nix      # ntfy server, localhost-only; all ntfy users and ACLs
 ```
@@ -164,6 +166,15 @@ nix flake update nixpkgs   # bump nixpkgs pin
 - **WireGuard:** terminated on ARBITER (`modules/wireguard.nix`), UDP 51820, tunnel `10.100.0.0/24` with ARBITER `.1`, iPhone `.2`, laptop `.3`, per-peer preshared keys in sops. Peers reach the whole home LAN masqueraded as ARBITER; the forward chain drops anything from `wg0` that isn't RFC 1918, and LAN hosts can't open connections into the VPN.
   - Built as a raw networkd netdev with `PrivateKeyFile=`, not `networking.wireguard`: that backend passes keys to systemd-networkd via `LoadCredential`, so a missing secret would stop networkd and cut SSH. Keep it that way.
   - Outside this repo: UniFi port forward UDP 51820 → ARBITER, and a public address or DDNS name for clients' `Endpoint`.
+- **Claude Code microVM:** `microvm.vms.claude` via microvm.nix (nixpkgs has no declarative-VM module). Internet only.
+  - QEMU, running as the unprivileged `microvm` user. No host directories are shared (no virtiofsd, which runs as root): the store is a read-only image (`storeOnDisk`) and state lives on volumes in `/var/lib/microvms/claude/` (`var.img`, `home.img`, `nix-rw-store.img`). `qemu-bridge-helper` is disabled on the host.
+  - Network: tap `vm-claude`, host `10.101.0.1`, guest `10.101.0.2`, NAT out the wired NIC. Forwarding to RFC 1918/CGNAT/link-local is dropped; the VM can reach only the host's DNS stub (resolved `DNSStubListenerExtra`) on ARBITER itself.
+  - Guest user `claude` with the admin's SSH key, no sudo, no root login. Reach it with `ssh -J admin@arbiter claude@10.101.0.2`.
+  - Nix inside the VM uses a writable store overlay; its `nixpkgs` registry is pinned to ARBITER's nixpkgs.
+  - Claude Code is installed by hand with Anthropic's native installer (the user's choice: self-updating, so not pinned). `gh auth login` and Claude's login are interactive; their tokens live on `home.img`, not in the repo. Prefer a fine-grained GitHub token limited to the repos Claude should touch.
+  - The VM restarts when its config changes (so on weekly upgrades that touch it).
+  - Testing: the Nix build sandbox here has no `/dev/kvm`, so NixOS VM tests run under TCG and a nested microVM is far too slow to boot. Test host-side rules with a network namespace on a veth named `vm-claude`, and the guest by building `microvm.vms.claude.config.config.microvm.declaredRunner` with user-mode networking and running it directly as the user (who has KVM).
+  - Never give the QEMU guest exactly 2048 MB of memory; it hangs at boot (microvm.nix issue 171).
 - **Formatter:** `nixfmt-tree` (nixfmt's own `nix fmt` wrapper) with `tree-root-file = "flake.nix"` so it never walks outside the repo.
 
 ## Open decisions (ask the user; don't choose silently)
