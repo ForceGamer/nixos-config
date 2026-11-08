@@ -12,6 +12,7 @@
     ../../modules/upgrade-alert.nix
     ../../modules/wireguard.nix
     ../../modules/claude-vm.nix
+    ../../modules/services/caddy.nix
     ../../modules/services/ntfy.nix
   ];
 
@@ -19,6 +20,9 @@
 
   # Encrypted with sops; decrypted at activation with the SSH host key.
   sops.defaultSopsFile = ./secrets.yaml;
+
+  # Registered at Cloudflare; services get subdomains of it (ntfy.<DOMAIN>).
+  homelab.domain = "<DOMAIN>";
 
   homelab.admin = {
     name = "admin";
