@@ -157,7 +157,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
 
 ## Decisions made
 
-- **Filesystem:** ext4, no encryption (unattended auto-upgrade reboots must come back without intervention). Which disk(s) to wipe is still open (see 1).
+- **Filesystem:** ext4, no encryption (unattended auto-upgrade reboots must come back without intervention). Root disk is the 1 TB Samsung 980 PRO NVMe (ID in `disko.nix`); whether any other disks exist or should be wiped is still open (see 1).
 - **Updates:** option (b). `modules/auto-upgrade.nix` rebuilds the deployed source (`self`, in the store) with `--override-input nixpkgs github:NixOS/nixpkgs/nixos-26.05`. Keep that URL in sync with `flake.nix`. Runs weekly (Sunday 03:15) rather than nightly: less churn, at the cost of up to a week of security-fix latency.
 - **sudo:** passwordless wheel (`wheelNeedsPassword = false`), since SSH is key-only.
 - **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. `<ADMIN_SSH_PUBKEY>` is still a placeholder.
@@ -190,7 +190,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
    - Default suggestion: (b) until (a) is set up.
 4. **sudo password.** Either a yescrypt hash in the repo (`mkpasswd -m yescrypt`, private repo only; moves to the secrets tool later), or passwordless wheel since SSH is key-only.
 5. **VLAN and DHCP reservation** for ARBITER in UniFi.
-6. **Values for the placeholders:** `<ADMIN_SSH_PUBKEY>`, `<DISK_ID>`, `<IPHONE_WG_PUBKEY>`, `<LAPTOP_WG_PUBKEY>`.
+6. **Values for the placeholders:** `<ADMIN_SSH_PUBKEY>`, `<IPHONE_WG_PUBKEY>`, `<LAPTOP_WG_PUBKEY>`.
 7. **Exposing ntfy:** reverse proxy (not nginx), hostname and TLS, and whether to set `upstream-base-url = "https://ntfy.sh"` for instant iOS push (ntfy.sh then sees message IDs, not content). Then a read-only phone user on `arbiter-alerts`.
 
 ## Later phases (context only; do not implement until asked)

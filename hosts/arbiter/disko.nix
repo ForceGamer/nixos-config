@@ -4,9 +4,10 @@
 {
   disko.devices.disk.main = {
     type = "disk";
-    # Fill in from `ls -l /dev/disk/by-id` on the installer. by-id is stable
-    # across reboots and controller ordering, unlike /dev/sdX or /dev/nvmeXnY.
-    device = "/dev/disk/by-id/<DISK_ID>";
+    # by-id is stable across reboots and controller ordering, unlike
+    # /dev/nvmeXnY. Taken from Proxmox; re-check it from the NixOS installer
+    # before running disko.
+    device = "/dev/disk/by-id/nvme-Samsung_SSD_980_PRO_with_Heatsink_1TB_S6WSNS0W619318E";
     content = {
       type = "gpt";
       partitions = {
