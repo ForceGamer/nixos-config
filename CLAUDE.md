@@ -25,10 +25,10 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 
 ### ARBITER (`nixosConfigurations.arbiter`, `networking.hostName = "arbiter"`)
 
-- **Hardware:** AMD Ryzen, 64 GB RAM, NVIDIA GTX 980 Ti (Maxwell). Wired Ethernet.
+- **Hardware:** AMD Ryzen, 64 GB RAM, NVIDIA GTX 1080 Ti (Pascal). Wired Ethernet.
 - **Currently runs Proxmox,** which will be wiped and replaced by NixOS. The old Home Assistant VM on it is not needed. Confirm with the user that nothing else on it needs backing up before any destructive step.
 - **Future role:** main service host. Phase 1 does not include any services.
-- **GPU:** leave it unconfigured in phase 1 (headless). Before adding the NVIDIA driver later, verify which driver branch still supports Maxwell; newer branches have dropped it.
+- **GPU:** proprietary driver, headless (see Decisions made).
 
 ## Rules
 
@@ -71,6 +71,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
     ├── users.nix        # immutable users, admin account
     ├── ssh.nix          # hardened sshd
     ├── networking.nix   # networkd + nftables firewall
+    ├── nvidia.nix       # headless NVIDIA driver (legacy 580 branch)
     ├── auto-upgrade.nix  # unattended updates
     ├── upgrade-alert.nix # ntfy alert when auto-upgrade fails
     ├── wireguard.nix     # WireGuard VPN into the home LAN (wg0, NAT)
@@ -157,6 +158,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
 
 ## Decisions made
 
+- **NVIDIA:** `modules/nvidia.nix`, proprietary closed modules from the `legacy_580` branch. The default branch (595+) dropped Pascal; 580 is supported until August 2028, after which the card needs replacing or stays on an unpatched driver. Headless: `videoDrivers` only switches the module on, no X server. `nvidia-persistenced` keeps the idle GPU in a low power state. Unfree is allowed only for the driver packages by name. The nixpkgs module makes `/dev/nvidia*` world-accessible (mode 666), so any local user or unsandboxed service can use the GPU; restrict services with `DeviceAllow`/`PrivateDevices` as needed. cache.nixos.org doesn't serve unfree builds, so the driver and its kernel module are compiled locally, including on ARBITER after each kernel bump. Check it after install with `nvidia-smi`.
 - **Filesystem:** ext4, no encryption (unattended auto-upgrade reboots must come back without intervention). Root disk is the 1 TB Samsung 980 PRO NVMe (ID in `disko.nix`); whether any other disks exist or should be wiped is still open (see 1).
 - **Updates:** option (b). `modules/auto-upgrade.nix` rebuilds the deployed source (`self`, in the store) with `--override-input nixpkgs github:NixOS/nixpkgs/nixos-26.05`. Keep that URL in sync with `flake.nix`. Runs weekly (Sunday 03:15) rather than nightly: less churn, at the cost of up to a week of security-fix latency.
 - **sudo:** passwordless wheel (`wheelNeedsPassword = false`), since SSH is key-only.

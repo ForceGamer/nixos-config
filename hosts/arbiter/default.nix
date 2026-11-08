@@ -7,6 +7,7 @@
     ../../modules/users.nix
     ../../modules/ssh.nix
     ../../modules/networking.nix
+    ../../modules/nvidia.nix
     ../../modules/auto-upgrade.nix
     ../../modules/upgrade-alert.nix
     ../../modules/wireguard.nix
