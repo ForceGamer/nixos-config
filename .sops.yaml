@@ -1,11 +1,14 @@
 # Who can decrypt the secrets in this repo.
 # - operator: the age key on the workstation, for editing.
 # - arbiter: ARBITER's SSH host key converted with ssh-to-age, so the host
-#   decrypts at activation. Added during install; then run `sops updatekeys`.
+#   decrypts at activation. If the host key changes, update it here and run
+#   `sops updatekeys`.
 keys:
   - &operator age1wjdu5wqrrshdvpe3pfzgkvnz9z7wrz5zcn7ppg6dr9cnxr9jjf6q3mfdgj
+  - &arbiter age1v6glezjslpkyrr2v74k4jkr2jqfgujjfrlggq7d8q3ne8pspupusx5uj56
 creation_rules:
   - path_regex: hosts/arbiter/secrets\.yaml$
     key_groups:
       - age:
           - *operator
+          - *arbiter
