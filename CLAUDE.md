@@ -186,7 +186,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
 
 1. **Moving updates to option (a):** a scheduled CI job bumps `flake.lock` and checks the build, and ARBITER's autoUpgrade pulls the repo. Fully declarative, unlike the current option (b), where the running system drifts from the committed lock. Needs CI, and a read-only deploy key generated on ARBITER and never committed.
 2. **VLAN:** ARBITER has a UniFi DHCP reservation; whether to move it to a dedicated server VLAN.
-3. **Values for the placeholders:** `<IPHONE_WG_PUBKEY>`, `<LAPTOP_WG_PUBKEY>`.
+3. **Value for the placeholder:** `<LAPTOP_WG_PUBKEY>`.
 4. **Exposing ntfy:** reverse proxy (not nginx), hostname and TLS, and whether to set `upstream-base-url = "https://ntfy.sh"` for instant iOS push (ntfy.sh then sees message IDs, not content). Then a read-only phone user on `arbiter-alerts`.
 
 ## Later phases (context only; do not implement until asked)

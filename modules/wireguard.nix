@@ -10,7 +10,7 @@ let
   port = 51820;
   peers = {
     iphone = {
-      publicKey = "<IPHONE_WG_PUBKEY>";
+      publicKey = "RmY9pGOMJsim3WmBd/e0NP0x7jHOp4uynMgIJYs/4hw=";
       address = "10.100.0.2/32";
     };
     laptop = {
