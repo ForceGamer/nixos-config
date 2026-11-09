@@ -130,25 +130,45 @@ in
     };
     pseudonyms = lib.mkOption {
       type = lib.types.listOf (
-        lib.types.submodule {
-          options = {
-            search = lib.mkOption {
-              type = lib.types.str;
-              description = "Python regex matched in tool results and rendered prompts.";
+        lib.types.submodule (
+          { config, ... }:
+          {
+            options = {
+              secret = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                example = "school-name";
+                description = ''
+                  sops key under `contextforge/` whose value is the text to
+                  match, case-insensitively and as whole words. Add one with
+                  `./add-pii.sh`, which also escapes regex metacharacters.
+                  The secret is declared for you.
+                '';
+              };
+              search = lib.mkOption {
+                type = lib.types.str;
+                description = ''
+                  Python regex matched in tool results and rendered prompts.
+                  Derived from `secret` when that is set; give it directly for
+                  patterns that aren't secret.
+                '';
+              };
+              replace = lib.mkOption {
+                type = lib.types.str;
+                description = "Replacement text, e.g. a fixed label like [SCHOOL].";
+              };
             };
-            replace = lib.mkOption {
-              type = lib.types.str;
-              description = "Replacement text, e.g. a fixed label like [SCHOOL].";
-            };
-          };
-        }
+            config.search = lib.mkIf (config.secret != null) (
+              lib.mkDefault "(?i)\\b${placeholder config.secret}\\b"
+            );
+          }
+        )
       );
       default = [ ];
       description = ''
         Search-and-replace rules applied to tool results before the generic
         PII filter. For names and places the regex patterns can't know.
-        Keep the names themselves out of the repo: reference a sops
-        placeholder in `search`.
+        Keep the names themselves out of the repo: use `secret`.
       '';
     };
   };
@@ -178,14 +198,17 @@ in
       "d ${home}/data 0700 ${user} ${user} -"
     ];
 
-    # Root-only; they reach the container through the templates below.
-    sops.secrets = lib.genAttrs [
-      "contextforge/jwt-secret-key"
-      "contextforge/auth-encryption-secret"
-      "contextforge/admin-password"
-      "contextforge/default-user-password"
-      "contextforge/school-name"
-    ] (_: { });
+    # Root-only; they reach the container through the templates below. The
+    # pseudonym secrets are whatever the host's entries name.
+    sops.secrets = lib.genAttrs (
+      [
+        "contextforge/jwt-secret-key"
+        "contextforge/auth-encryption-secret"
+        "contextforge/admin-password"
+        "contextforge/default-user-password"
+      ]
+      ++ map (p: "contextforge/${p.secret}") (lib.filter (p: p.secret != null) cfg.pseudonyms)
+    ) (_: { });
 
     # Secrets reach the container as an env file podman reads as this user.
     # DEFAULT_USER_PASSWORD is the initial password for accounts created in
