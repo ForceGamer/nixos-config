@@ -1,6 +1,6 @@
 # Homelab NixOS configuration
 
-Flake-based NixOS configuration for all of the user's NixOS devices, starting with the homelab. **Current scope: ARBITER only.** It is installed and running phase 1 (essentials) plus ntfy, WireGuard and the Claude Code microVM. Caddy (reverse proxy for ntfy) is configured but not yet deployed; see `CADDY.md`. The structure should allow more hosts later, but don't build for them now.
+Flake-based NixOS configuration for all of the user's NixOS devices, starting with the homelab. **Current scope: ARBITER only.** It is installed and running phase 1 (essentials) plus ntfy, WireGuard and the Claude Code microVM. Caddy (reverse proxy for ntfy) is configured but not yet deployed; see `CADDY.md`. ContextForge (PII-scrubbing MCP gateway, internet-facing) and fail2ban are configured but not yet deployed; see `CONTEXTFORGE.md`. The structure should allow more hosts later, but don't build for them now.
 
 ## Priorities (in order; use them to break ties)
 
@@ -59,6 +59,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 ├── flake.lock
 ├── CLAUDE.md
 ├── CADDY.md                           # operator steps to finish the Caddy/ntfy rollout
+├── CONTEXTFORGE.md                    # what the MCP gateway scrubs (and doesn't); operator steps
 ├── .sops.yaml                         # who can decrypt secrets (age recipients)
 ├── hosts/
 │   └── arbiter/
@@ -78,9 +79,11 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
     ├── wireguard.nix     # WireGuard VPN into the home LAN (wg0, NAT)
     ├── claude-vm.nix     # host side of the Claude Code microVM (tap, NAT, firewall)
     ├── claude-vm-guest.nix # the microVM's own NixOS config
+    ├── fail2ban.nix      # shared ban policy; each exposed service adds its jail
     └── services/
         ├── caddy.nix     # Caddy reverse proxy, wildcard cert via ACME DNS-01; homelab.domain
-        └── ntfy.nix      # ntfy server on localhost behind Caddy; all ntfy users and ACLs
+        ├── ntfy.nix      # ntfy server on localhost behind Caddy; all ntfy users and ACLs
+        └── contextforge.nix # MCP gateway (rootless podman) with PII plugins; public 8443 vhost + jail
 ```
 
 ## Phase 1 scope: ARBITER essentials
@@ -169,7 +172,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
 - **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. Authenticated by TEMPLAR's ed25519 key (`templar`), which also reaches the Claude microVM.
 - **Secrets:** sops-nix (added as a flake input, since nixpkgs has no module that decrypts repo-committed secrets). Operator age key lives on the workstation at `~/.config/sops/age/keys.txt`.
 - **ntfy:** native `services.ntfy-sh`, listening on `127.0.0.1:2586`, `deny-all` by default with declarative users/tokens from sops. One identity so far: `upgrade-notifier`, write-only on `arbiter-alerts`. Served as `https://ntfy.gameforce.me` through Caddy (`base-url` set to that, `behind-proxy` on). Phone user and iOS upstream are still open.
-- **Domain and exposure:** `homelab.domain = "gameforce.me"`, DNS at Cloudflare. `tun.gameforce.me` → WAN IP via DDNS (WireGuard endpoint); the apex and `*.gameforce.me` → ARBITER's LAN IP in public DNS, all DNS-only (not proxied). **Only WireGuard is exposed** (UniFi forwards UDP 51820 and nothing else); every other service is for the LAN and WireGuard peers.
+- **Domain and exposure:** `homelab.domain = "gameforce.me"`, DNS at Cloudflare. `tun.gameforce.me` → WAN IP via DDNS (WireGuard endpoint); the apex and `*.gameforce.me` → ARBITER's LAN IP in public DNS, all DNS-only (not proxied). **Exposed: WireGuard and the ContextForge MCP endpoint only** (UniFi forwards UDP 51820 → 51820 and TCP 443 → 8443; `mcp.gameforce.me` is an A record on the WAN IP via DDNS); every other service is for the LAN and WireGuard peers.
 - **Reverse proxy:** native `services.caddy`, TCP 443 only (no port 80, HTTP/3 off), accepted only from private IPv4 sources (`extraInputRules`, so it holds on the host even if UniFi ever forwards 443). Each service module adds its own `services.caddy.virtualHosts` entry on a subdomain of `homelab.domain` with `useACMEHost = "wildcard"`.
   - Certificates: `security.acme.certs.wildcard` (`*.gameforce.me`, lego from nixpkgs) with Cloudflare DNS-01; token `cloudflare/dns-api-token` in sops, passed via `credentialFiles` (LoadCredential). Not Caddy's own ACME: stock Caddy lacks the Cloudflare plugin and a plugin build means extra Go modules compiled locally. Propagation checked against `1.1.1.1:53`.
   - Caddy's admin API is a `0600` unix socket in `/run/caddy`, not TCP `localhost:2019`. Capabilities reduced to `CAP_NET_BIND_SERVICE`.
@@ -187,6 +190,12 @@ nix flake update nixpkgs   # bump nixpkgs pin
   - Remote Control: a `claude` user service (lingering, so it runs from boot) runs `claude remote-control --name claude-vm --spawn same-dir` in `~/src` through a login shell, so new sessions can be started from the desktop app, claude.ai or the phone without SSH. Outbound only. It's skipped until `~/.local/bin/claude` exists, and needs one interactive `claude remote-control` run in `~/src` to accept the trust and enable prompts; until then it fails and retries every minute. Transcripts pass through Anthropic while connected, and anyone with the claude.ai account can steer sessions.
   - Testing: the Nix build sandbox here has no `/dev/kvm`, so NixOS VM tests run under TCG and a nested microVM is far too slow to boot. Test host-side rules with a network namespace on a veth named `vm-claude`, and the guest by building `microvm.vms.claude.config.config.microvm.declaredRunner` with user-mode networking and running it directly as the user (who has KVM).
   - Never give the QEMU guest exactly 2048 MB of memory; it hangs at boot (microvm.nix issue 171).
+- **ContextForge:** `modules/services/contextforge.nix`, IBM's MCP gateway as the PII-scrubbing hop between MCP servers with personal data and AI clients. `ghcr.io/ibm/mcp-context-forge` v1.1.0 pinned by digest (no nixpkgs package), rootless podman under `contextforge` (uid 380, linger, `--userns=keep-id`), read-only rootfs, no capabilities, SQLite in `/var/lib/contextforge/data`, `127.0.0.1:4444`. Rootless rather than root podman for least privilege; the static uid is what the oci-containers module needs for `/run/user/<uid>`.
+  - Scrubbing is in ContextForge's plugin framework on `tool_post_invoke` and `prompt_post_fetch` only: `regex_filter` (fixed pseudonyms, `homelab.contextforge.pseudonyms`, names from sops) then `cpex_pii_filter` with `hash` masking (consistent per value within one process; `GUNICORN_WORKERS=1`). `fail_on_plugin_error = true`: a plugin failure fails the call. Regex-based, no NER; resources and tool arguments aren't filtered, so virtual servers get tools only. Presidio would mean the external LLMGuard plugin container (downloads models at start), rejected under priority 1.
+  - The plugin YAML is a `sops.templates` file (it carries sops placeholders), mounted read-only into the container; secrets reach it through a second template as podman's `--env-file`. Both owned by `contextforge`, mode 0400.
+  - Two Caddy sites: `mcp-admin.<domain>` on 443 (LAN/WireGuard, full gateway and admin UI) and `mcp.<domain>:8443` (internet, `/servers/*` only, 2 MB bodies, everything else 404 in Caddy). Port 8443 rather than relaxing 443 keeps the private-source rule on 443 intact; the router maps WAN 443 → 8443. Clients use expiring JWT bearer tokens from the admin UI; claude.ai connectors send them as a request header.
+  - Outside this repo: four `contextforge/*` sops secrets, the `mcp` A record, the UniFi forward, and the upstream servers/virtual servers/tokens configured in the UI (stored in its SQLite). See `CONTEXTFORGE.md`.
+- **fail2ban:** `modules/fail2ban.nix` for policy (private ranges never banned, 5 tries / 10 min, 1 h doubling to a week, `nftables-allports`), jails live with their service. Jail `contextforge` reads Caddy's JSON access log for the public vhost (401/403/404; `datepattern ^.*"ts":{EPOCH}`, filter verified with `fail2ban-regex`). CrowdSec was rejected: it pulls hub configs and blocklists at runtime (priority 1). The module's default `sshd` jail stays on; it's harmless.
 - **Repo:** private GitHub repo `nixos-config` (`origin`). The workstation checkout is the only place the config is edited; push after committing. Commits use the GitHub noreply email (set in this repo's `.git/config`).
 - **Formatter:** `nixfmt-tree` (nixfmt's own `nix fmt` wrapper) with `tree-root-file = "flake.nix"` so it never walks outside the repo.
 
@@ -194,8 +203,9 @@ nix flake update nixpkgs   # bump nixpkgs pin
 
 1. **Moving updates to option (a):** a scheduled CI job bumps `flake.lock` and checks the build, and ARBITER's autoUpgrade pulls the repo. Fully declarative, unlike the current option (b), where the running system drifts from the committed lock. Needs CI, and a read-only deploy key generated on ARBITER and never committed.
 2. **VLAN:** ARBITER has a UniFi DHCP reservation; whether to move it to a dedicated server VLAN.
-3. **Values for the placeholders:** `<LAPTOP_WG_PUBKEY>`, and the `cloudflare/dns-api-token` sops secret (the build fails until it exists).
+3. **Values for the placeholders:** `<LAPTOP_WG_PUBKEY>`, and the `cloudflare/dns-api-token` and four `contextforge/*` sops secrets (the build fails until they exist).
 4. **Finishing ntfy for the phone:** whether to set `upstream-base-url = "https://ntfy.sh"` for iOS background push (ntfy.sh then sees message IDs, not content; ntfy then needs egress to ntfy.sh; the phone still fetches over WireGuard). A read-only phone user on `arbiter-alerts`.
+5. **ContextForge follow-ups:** which MCP servers to put behind it and how (remote URL vs. a stdio server that needs its own wrapper service); whether a real NER layer is worth a second container; whether to alert (ntfy) on fail2ban bans.
 
 ## Later phases (context only; do not implement until asked)
 

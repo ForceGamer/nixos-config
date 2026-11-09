@@ -11,9 +11,10 @@ are the parts only you can do.
 | `tun.gameforce.me` | WAN IP (DDNS) | Internet, UDP 51820 → ARBITER WireGuard |
 | `gameforce.me` | ARBITER's LAN IP | LAN and WireGuard peers |
 | `*.gameforce.me` | ARBITER's LAN IP | LAN and WireGuard peers |
+| `mcp.gameforce.me` | WAN IP (DDNS) | Internet, TCP 443 → ARBITER 8443 (see `CONTEXTFORGE.md`) |
 
-WireGuard is the only thing exposed. Everything else needs you to be at home or
-on the VPN.
+WireGuard and the ContextForge MCP endpoint are the only things exposed.
+Everything else needs you to be at home or on the VPN.
 
 ## What the config does
 

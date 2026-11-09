@@ -1,3 +1,4 @@
+{ config, ... }:
 {
   imports = [
     ./hardware-configuration.nix
@@ -12,8 +13,10 @@
     ../../modules/upgrade-alert.nix
     ../../modules/wireguard.nix
     ../../modules/claude-vm.nix
+    ../../modules/fail2ban.nix
     ../../modules/services/caddy.nix
     ../../modules/services/ntfy.nix
+    ../../modules/services/contextforge.nix
   ];
 
   networking.hostName = "arbiter";
@@ -24,6 +27,18 @@
   # DNS at Cloudflare. The apex and *.gameforce.me point at ARBITER's LAN
   # address; only tun.gameforce.me (DDNS, WireGuard) points at the WAN.
   homelab.domain = "gameforce.me";
+
+  # Names the generic PII patterns can't know, replaced in every tool result
+  # before it reaches an AI client. The values live in sops
+  # (`contextforge/school-name`), not here; add one entry per name. The
+  # search is a Python regex, so escape metacharacters in the sops value if
+  # the name has any.
+  homelab.contextforge.pseudonyms = [
+    {
+      search = "(?i)\\b${config.sops.placeholder."contextforge/school-name"}\\b";
+      replace = "[SCHOOL]";
+    }
+  ];
 
   homelab.admin = {
     name = "admin";
