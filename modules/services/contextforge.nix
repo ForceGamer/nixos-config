@@ -44,6 +44,42 @@ let
     "tool_post_invoke"
     "prompt_post_fetch"
   ];
+
+  # Every rule is case-insensitive, like the PII filter's own patterns, unless
+  # it opens with its own inline flag group such as (?im). A plain (?:...)
+  # group is not one.
+  hasFlags = s: builtins.match "\\(\\?[a-zA-Z]+\\).*" s != null;
+  words = map (p: {
+    search = (if hasFlags p.search then "" else "(?i)") + p.search;
+    inherit (p) replace;
+  }) cfg.pseudonyms;
+
+  # The plugin drops a rule whose regex doesn't compile, silently
+  # (`except re.error: pass`), so a typo would leak the very thing the rule
+  # exists to hide. Compile them all here with the same engine; wired into
+  # `nix flake check` from flake.nix. Secret values appear as sops
+  # placeholders, which contain no regex metacharacters.
+  pseudonymsCheck =
+    pkgs.runCommand "contextforge-pseudonyms-check"
+      {
+        nativeBuildInputs = [ pkgs.python3 ];
+        words = builtins.toJSON words;
+        passAsFile = [ "words" ];
+      }
+      ''
+        python3 -I - "$wordsPath" <<'EOF'
+        import json, re, sys
+        bad = 0
+        for w in json.load(open(sys.argv[1])):
+            try:
+                re.sub(w["search"], w["replace"], "probe")
+            except re.error as e:
+                bad += 1
+                print(f"invalid pseudonym rule {w['search']!r} -> {w['replace']!r}: {e}", file=sys.stderr)
+        sys.exit(1 if bad else 0)
+        EOF
+        touch "$out"
+      '';
   plugins = {
     plugin_settings = {
       # A plugin error must fail the call, never let the raw result through.
@@ -59,12 +95,7 @@ let
         hooks = postHooks;
         mode = "enforce";
         priority = 40;
-        # Every rule is case-insensitive, like the PII filter's own patterns,
-        # unless it opens with its own inline flags.
-        config.words = map (p: {
-          search = (if lib.hasPrefix "(?" p.search then "" else "(?i)") + p.search;
-          inherit (p) replace;
-        }) cfg.pseudonyms;
+        config.words = words;
       }
       {
         name = "PIIFilter";
@@ -117,6 +148,12 @@ let
 in
 {
   options.homelab.contextforge = {
+    pseudonymsCheck = lib.mkOption {
+      type = lib.types.package;
+      default = pseudonymsCheck;
+      readOnly = true;
+      description = "Derivation that fails if any pseudonym regex doesn't compile; a flake check.";
+    };
     publicPort = lib.mkOption {
       type = lib.types.port;
       default = 8443;
