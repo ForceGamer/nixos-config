@@ -183,16 +183,22 @@ in
       "contextforge/jwt-secret-key"
       "contextforge/auth-encryption-secret"
       "contextforge/admin-password"
+      "contextforge/default-user-password"
       "contextforge/school-name"
     ] (_: { });
 
     # Secrets reach the container as an env file podman reads as this user.
+    # DEFAULT_USER_PASSWORD is the initial password for accounts created in
+    # the UI. Nobody gets one here (registration is off), but the gateway
+    # validates it at start and its built-in default fails the 12-character
+    # minimum.
     sops.templates."contextforge.env" = {
       owner = user;
       content = ''
         JWT_SECRET_KEY=${placeholder "jwt-secret-key"}
         AUTH_ENCRYPTION_SECRET=${placeholder "auth-encryption-secret"}
         PLATFORM_ADMIN_PASSWORD=${placeholder "admin-password"}
+        DEFAULT_USER_PASSWORD=${placeholder "default-user-password"}
       '';
       restartUnits = [ unit ];
     };

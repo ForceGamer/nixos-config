@@ -104,17 +104,23 @@ Add at the top level (4-space indent, like the rest of the file):
 contextforge:
     jwt-secret-key: <64 hex chars, e.g. `openssl rand -hex 32`>
     auth-encryption-secret: <64 hex chars, another `openssl rand -hex 32`>
-    admin-password: <a long password; you'll type it into the admin UI>
+    admin-password: <12+ chars with upper, lower and a symbol; you'll type it into the admin UI>
+    default-user-password: <64 hex chars, `openssl rand -hex 32`; never typed anywhere>
     school-name: <the school's name as it appears in mail and notes>
 ```
 
 - Hex keeps the env file free of characters podman's `--env-file` would
-  mangle. Don't reuse one value for both keys.
+  mangle. Don't reuse one value for two keys. In passwords avoid `"`, `'`,
+  `$`, `\` and `#` for the same reason.
+- `default-user-password` is the gateway's initial password for accounts
+  created in the UI. No account gets one here (registration is off), but the
+  gateway refuses to start unless it passes the same 12-character check as
+  the admin password; its built-in default doesn't.
 - `school-name` is used as a Python regex (`(?i)\b<name>\b`). Plain words are
   fine; escape `.`, `(` and the like with a backslash if the name has them.
   Add more rules to `homelab.contextforge.pseudonyms` the same way; each one
   needs its own sops key.
-- The build fails until all four keys exist (sops-nix checks the file at build
+- The build fails until all five keys exist (sops-nix checks the file at build
   time), same as the pending `cloudflare/dns-api-token`.
 
 ## 2. DNS and the router
