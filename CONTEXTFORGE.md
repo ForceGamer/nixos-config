@@ -8,10 +8,10 @@ has been deployed. The steps below are the parts only you can do.
 ## What it does
 
 ```
-claude.ai / Claude Code ──TLS 443 (router) → ARBITER:8443──▶ Caddy ──▶ ContextForge ──▶ Fastmail MCP
-                                                               only /servers/*        │          Obsidian MCP
-                                                                                      ▼
-                                                                         tool result → Pseudonyms → PIIFilter → client
+claude.ai / Claude Code ──TLS tun.gameforce.me:47231──▶ Caddy ──▶ ContextForge ──▶ Fastmail MCP
+                                                      /servers/* + Bearer   │          Obsidian MCP
+                                                      header only; all      ▼
+                                                      else dropped    tool result → Pseudonyms → PIIFilter → client
 ```
 
 - **Gateway:** `ghcr.io/ibm/mcp-context-forge`, v1.1.0, pinned by digest, as a
@@ -50,19 +50,40 @@ claude.ai / Claude Code ──TLS 443 (router) → ARBITER:8443──▶ Caddy �
   - Partial leaks via tool *input*: the AI can still ask a tool to search for
     "mail from <name>" and get hashed results back. The gateway hides values,
     not the existence of data.
-- **Exposure:** two Caddy sites, one upstream.
+- **Exposure:** three Caddy sites, one upstream. Built to look like nothing
+  from the outside; every claim below was checked against the real Caddy
+  binary.
   - `https://mcp-admin.gameforce.me` (port 443, LAN and WireGuard only, as all
     443 traffic): the full gateway, including the admin UI at `/admin`.
-  - `https://mcp.gameforce.me:8443` (internet): only `/servers/*` is proxied
-    (the per-virtual-server MCP endpoints); every other path gets a 404 from
-    Caddy and never reaches the gateway. Request bodies capped at 2 MB. Access
-    log in `/var/log/caddy/access-mcp.gameforce.me.log`.
+  - `https://tun.gameforce.me:47231` (internet): the WireGuard hostname, which
+    is already public on the WAN IP, on a non-standard port
+    (`homelab.contextforge.publicPort`). Only `/servers/*` (the
+    per-virtual-server MCP endpoints) is proxied, and only when the request
+    carries an `Authorization: Bearer …` header at all. Everything else is
+    **aborted**: Caddy closes the connection without sending a byte, so a
+    probe doesn't even learn that an HTTP server is there. Caddy checks only
+    that a bearer header exists (stock Caddy can't validate JWTs); the gateway
+    validates it and answers 401 for a bad one. Request bodies capped at 2 MB;
+    the `Server` header is stripped. Access log in
+    `/var/log/caddy/access-tun.gameforce.me.log`.
+  - A **catch-all** on the same port for any other SNI, or none: it presents a
+    self-signed `CN=localhost` decoy certificate (generated at build time)
+    instead of the wildcard, and aborts. Without it Caddy hands the wildcard
+    to anyone who connects, which would reveal the domain to a port scan.
+    Globally, `strict_sni_host` makes Caddy answer 421 when the `Host` header
+    doesn't match the SNI; that closes an HTTP/2 path where a request with the
+    right SNI and a foreign `:authority` otherwise bypassed every site and got
+    an empty 200. What a scanner sees: a TLS port with a `localhost` cert that
+    resets connections. What someone who guesses the hostname sees: the same,
+    unless they also send a bearer header, in which case the gateway's 401.
   - Clients authenticate with a ContextForge bearer token (JWT, expiring,
     created in the admin UI). The gateway refuses everything unauthenticated
     (`AUTH_REQUIRED`, `MCP_CLIENT_AUTH_ENABLED`); self-registration is off.
-  - **fail2ban** (`modules/fail2ban.nix`, jail `contextforge`): 5 responses of
-    401/403/404 from one address within 10 minutes on the public port bans it
-    on all ports for 1 h, doubling on repeats up to a week. Private sources
+  - **fail2ban** (`modules/fail2ban.nix`, jail `contextforge`): 5 junk
+    requests from one address within 10 minutes on the public port bans it
+    on all ports for 1 h, doubling on repeats up to a week. Junk = status 0
+    (aborted by Caddy), 421 (Host/SNI mismatch), or 401/403/404 from the
+    gateway. Private sources
     (LAN, WireGuard peers, the Claude VM) are never banned. Chosen over
     CrowdSec because it fetches nothing at runtime and is one native daemon.
     NixOS also enables its default `sshd` jail; harmless, SSH isn't exposed.
@@ -98,21 +119,20 @@ contextforge:
 
 ## 2. DNS and the router
 
-- **Cloudflare:** add an `A` record `mcp.gameforce.me` pointing at the WAN IP,
-  DNS-only (grey cloud). Let your DDNS updater keep it current, like `tun`.
-  Don't rely on the wildcard: that points at the LAN address, which the
-  internet can't reach. `mcp-admin.gameforce.me` is covered by the wildcard.
-- **UniFi:** add a port forward **TCP 443 (WAN) → ARBITER TCP 8443**. 443 on the
-  outside keeps the client URL free of a port and gets through restrictive
-  networks; 8443 on the inside keeps ARBITER's own 443 LAN-only exactly as
-  before. (Forwarding WAN 8443 → 8443 also works; then every client URL needs
-  `:8443`.)
-- From inside the LAN, `mcp.gameforce.me` resolves to the WAN IP and comes
-  back in through UniFi's hairpin NAT. That's expected; use `mcp-admin` for
-  the admin UI.
+- **Cloudflare:** nothing to add. `tun.gameforce.me` already points at the WAN
+  IP via DDNS, and the wildcard certificate covers it (and `mcp-admin`). No
+  new name appears in public DNS or in Certificate Transparency.
+- **UniFi:** add a port forward **TCP 47231 (WAN) → ARBITER TCP 47231**, next
+  to the existing UDP 51820 one. Same port on both sides, so there is one
+  number to remember; if you change `homelab.contextforge.publicPort`, change
+  the forward too. The clients here are Anthropic's servers and your own
+  machines, so a non-standard port costs nothing in reachability; it just
+  keeps the port out of mass scans of the usual HTTPS ports.
+- From inside the LAN, `tun.gameforce.me:47231` resolves to the WAN IP and
+  comes back in through UniFi's hairpin NAT. That's expected; use `mcp-admin`
+  for the admin UI.
 
-This is the second thing exposed, after WireGuard. The certificate is the
-existing wildcard, so nothing changes in Certificate Transparency.
+This is the second thing exposed, after WireGuard, on the same hostname.
 
 ## 3. Deploy and first login
 
@@ -132,6 +152,20 @@ ssh admin@arbiter sudo fail2ban-client status contextforge
 If the container exits on a read-only filesystem error, the image started
 writing somewhere new; the knob is `--read-only` in `extraOptions`. Then
 `switch`.
+
+From TEMPLAR, confirm the outside view (each command's expected result in
+the comment; the first three go through the router's hairpin NAT):
+
+```sh
+openssl s_client -connect tun.gameforce.me:47231 -noservername </dev/null 2>/dev/null | grep subject=   # CN=localhost (decoy)
+openssl s_client -connect tun.gameforce.me:47231 </dev/null 2>/dev/null | grep subject=                 # CN=*.gameforce.me
+curl -sSi https://tun.gameforce.me:47231/servers/x/mcp; echo "exit=$?"                                 # no output, exit 52 or 56 (dropped)
+curl -sSi -H 'Authorization: Bearer x' https://tun.gameforce.me:47231/servers/x/mcp | head -1          # HTTP/2 401 (gateway)
+curl -sS https://mcp-admin.gameforce.me/health                                                         # ok
+```
+
+A few of those probes count as junk for fail2ban, but TEMPLAR is a private
+source and can't be banned.
 
 Open `https://mcp-admin.gameforce.me/admin`, log in as `admin@gameforce.me`
 with `admin-password`.
@@ -159,10 +193,11 @@ each detection as a type and count, never the value:
 ## 5. Connect a client
 
 - **claude.ai → Settings → Connectors → Add custom connector:** URL
-  `https://mcp.gameforce.me/servers/<UUID>/mcp`, and under *Request headers*
-  add `Authorization` with the value `Bearer <token>` (the `Bearer ` prefix is
-  required). No OAuth needed.
-- **Claude Code:** `claude mcp add --transport http fastmail https://mcp.gameforce.me/servers/<UUID>/mcp --header "Authorization: Bearer <token>"`.
+  `https://tun.gameforce.me:47231/servers/<UUID>/mcp`, and under *Request
+  headers* add `Authorization` with the value `Bearer <token>` (the `Bearer `
+  prefix is required; without the header Caddy drops the connection before
+  the gateway ever sees it). No OAuth needed.
+- **Claude Code:** `claude mcp add --transport http fastmail https://tun.gameforce.me:47231/servers/<UUID>/mcp --header "Authorization: Bearer <token>"`.
 
 Anyone holding the token can call the tools as you, so treat it like a
 password and rotate it from the admin UI if in doubt.
