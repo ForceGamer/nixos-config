@@ -42,6 +42,60 @@
       secret = "school-name";
       replace = "[SCHOOL]";
     }
+    {
+      # Order/tracking/invoice/booking numbers: a label (EN/NO) followed by a
+      # 5–30 char alphanumeric token with at least one digit. Keeps the label.
+      search = "(?i)\\b((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?\\s*[#:]?\\s*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9-]*\\d)[A-Z0-9][A-Z0-9-]{4,29}\\b";
+      replace = "\\1[ORDER]";
+    }
+    {
+      secret = "middlename";
+      replace = "[MIDDLE_NAME]";
+    }
+
+    {
+      secret = "surname";
+      replace = "[SURNAME]";
+    }
+
+    {
+      secret = "employer-short";
+      replace = "[EMPLOYER_SHORT]";
+    }
+    {
+      secret = "employer";
+      replace = "[EMPLOYER]";
+    }
+    {
+      secret = "decree-yonder";
+      replace = "[NAME]";
+    }
+    {
+      secret = "ivy-pork";
+      replace = "[NAME]";
+    }
+
+    {
+      secret = "home";
+      replace = "[HOME]";
+    }
+    {
+      secret = "home-town";
+      replace = "[HOME]";
+    }
+    {
+      search = "([0-9]*\.[0-9]+\s+(?:USDG|LTC|BTC)";
+      replace = "[CRYPTO_AMOUNT]";
+    }
+    {
+      search = ">[0-9]+</div>";
+      replace = ">[ORDER_ID]</div>";
+    }
+    {
+      search = "(?:€|$)[0-9]*\\.[0-9]+";
+      replace = "[AMOUNT]";
+    }
+
     #{
     #  # ISO 8601 timestamps, e.g. 2026-11-09T00:00:00Z
     #  search = "\\b\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):?[0-5]\\d)\\b";
