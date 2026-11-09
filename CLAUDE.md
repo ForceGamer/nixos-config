@@ -1,6 +1,6 @@
 # Homelab NixOS configuration
 
-Flake-based NixOS configuration for all of the user's NixOS devices, starting with the homelab. **Current scope: ARBITER only.** It is installed and running phase 1 (essentials) plus ntfy, WireGuard and the Claude Code microVM. The structure should allow more hosts later, but don't build for them now.
+Flake-based NixOS configuration for all of the user's NixOS devices, starting with the homelab. **Current scope: ARBITER only.** It is installed and running phase 1 (essentials) plus ntfy, WireGuard and the Claude Code microVM. Caddy (reverse proxy for ntfy) is configured but not yet deployed; see `CADDY.md`. The structure should allow more hosts later, but don't build for them now.
 
 ## Priorities (in order; use them to break ties)
 
@@ -58,6 +58,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 ├── flake.nix
 ├── flake.lock
 ├── CLAUDE.md
+├── CADDY.md                           # operator steps to finish the Caddy/ntfy rollout
 ├── .sops.yaml                         # who can decrypt secrets (age recipients)
 ├── hosts/
 │   └── arbiter/
@@ -78,7 +79,8 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
     ├── claude-vm.nix     # host side of the Claude Code microVM (tap, NAT, firewall)
     ├── claude-vm-guest.nix # the microVM's own NixOS config
     └── services/
-        └── ntfy.nix      # ntfy server, localhost-only; all ntfy users and ACLs
+        ├── caddy.nix     # Caddy reverse proxy, wildcard cert via ACME DNS-01; homelab.domain
+        └── ntfy.nix      # ntfy server on localhost behind Caddy; all ntfy users and ACLs
 ```
 
 ## Phase 1 scope: ARBITER essentials
@@ -166,10 +168,15 @@ nix flake update nixpkgs   # bump nixpkgs pin
 - **sudo:** passwordless wheel (`wheelNeedsPassword = false`), since SSH is key-only.
 - **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. Authenticated by TEMPLAR's ed25519 key (`templar`), which also reaches the Claude microVM.
 - **Secrets:** sops-nix (added as a flake input, since nixpkgs has no module that decrypts repo-committed secrets). Operator age key lives on the workstation at `~/.config/sops/age/keys.txt`.
-- **ntfy:** native `services.ntfy-sh`, localhost-only on `127.0.0.1:2586`, `deny-all` by default with declarative users/tokens from sops. One identity so far: `upgrade-notifier`, write-only on `arbiter-alerts`. Exposing it (reverse proxy, real `base-url`, iOS upstream) is still open.
+- **ntfy:** native `services.ntfy-sh`, listening on `127.0.0.1:2586`, `deny-all` by default with declarative users/tokens from sops. One identity so far: `upgrade-notifier`, write-only on `arbiter-alerts`. Served as `https://ntfy.gameforce.me` through Caddy (`base-url` set to that, `behind-proxy` on). Phone user and iOS upstream are still open.
+- **Domain and exposure:** `homelab.domain = "gameforce.me"`, DNS at Cloudflare. `tun.gameforce.me` → WAN IP via DDNS (WireGuard endpoint); the apex and `*.gameforce.me` → ARBITER's LAN IP in public DNS, all DNS-only (not proxied). **Only WireGuard is exposed** (UniFi forwards UDP 51820 and nothing else); every other service is for the LAN and WireGuard peers.
+- **Reverse proxy:** native `services.caddy`, TCP 443 only (no port 80, HTTP/3 off), accepted only from private IPv4 sources (`extraInputRules`, so it holds on the host even if UniFi ever forwards 443). Each service module adds its own `services.caddy.virtualHosts` entry on a subdomain of `homelab.domain` with `useACMEHost = "wildcard"`.
+  - Certificates: `security.acme.certs.wildcard` (`*.gameforce.me`, lego from nixpkgs) with Cloudflare DNS-01; token `cloudflare/dns-api-token` in sops, passed via `credentialFiles` (LoadCredential). Not Caddy's own ACME: stock Caddy lacks the Cloudflare plugin and a plugin build means extra Go modules compiled locally. Propagation checked against `1.1.1.1:53`.
+  - Caddy's admin API is a `0600` unix socket in `/run/caddy`, not TCP `localhost:2019`. Capabilities reduced to `CAP_NET_BIND_SERVICE`.
+  - Outside this repo: the Cloudflare DNS records and API token. See `CADDY.md`.
 - **WireGuard:** terminated on ARBITER (`modules/wireguard.nix`), UDP 51820, tunnel `10.100.0.0/24` with ARBITER `.1`, iPhone `.2`, laptop `.3`, per-peer preshared keys in sops. Peers reach the whole home LAN masqueraded as ARBITER; the forward chain drops anything from `wg0` that isn't RFC 1918, and LAN hosts can't open connections into the VPN.
   - Built as a raw networkd netdev with `PrivateKeyFile=`, not `networking.wireguard`: that backend passes keys to systemd-networkd via `LoadCredential`, so a missing secret would stop networkd and cut SSH. Keep it that way.
-  - Outside this repo: UniFi port forward UDP 51820 → ARBITER, and a public address or DDNS name for clients' `Endpoint`.
+  - Outside this repo: UniFi port forward UDP 51820 → ARBITER, and DDNS keeping `tun.gameforce.me` (clients' `Endpoint`) on the WAN IP.
 - **Claude Code microVM:** `microvm.vms.claude` via microvm.nix (nixpkgs has no declarative-VM module). Internet only.
   - QEMU, running as the unprivileged `microvm` user. No host directories are shared (no virtiofsd, which runs as root): the store is a read-only image (`storeOnDisk`) and state lives on volumes in `/var/lib/microvms/claude/` (`var.img`, `home.img`, `nix-rw-store.img`). `qemu-bridge-helper` is disabled on the host.
   - Network: tap `vm-claude`, host `10.101.0.1`, guest `10.101.0.2`, NAT out the wired NIC. Forwarding to RFC 1918/CGNAT/link-local is dropped; the VM can reach only the host's DNS stub (resolved `DNSStubListenerExtra`) on ARBITER itself.
@@ -187,14 +194,13 @@ nix flake update nixpkgs   # bump nixpkgs pin
 
 1. **Moving updates to option (a):** a scheduled CI job bumps `flake.lock` and checks the build, and ARBITER's autoUpgrade pulls the repo. Fully declarative, unlike the current option (b), where the running system drifts from the committed lock. Needs CI, and a read-only deploy key generated on ARBITER and never committed.
 2. **VLAN:** ARBITER has a UniFi DHCP reservation; whether to move it to a dedicated server VLAN.
-3. **Value for the placeholder:** `<LAPTOP_WG_PUBKEY>`.
-4. **Exposing ntfy:** reverse proxy (not nginx), hostname and TLS, and whether to set `upstream-base-url = "https://ntfy.sh"` for instant iOS push (ntfy.sh then sees message IDs, not content). Then a read-only phone user on `arbiter-alerts`.
+3. **Values for the placeholders:** `<LAPTOP_WG_PUBKEY>`, and the `cloudflare/dns-api-token` sops secret (the build fails until it exists).
+4. **Finishing ntfy for the phone:** whether to set `upstream-base-url = "https://ntfy.sh"` for iOS background push (ntfy.sh then sees message IDs, not content; ntfy then needs egress to ntfy.sh; the phone still fetches over WireGuard). A read-only phone user on `arbiter-alerts`.
 
 ## Later phases (context only; do not implement until asked)
 
 These need decisions of their own first:
 
-- Reverse proxy (not nginx)
 - NAS mounts
 - Backups to the NAS
 - Monitoring and alerting

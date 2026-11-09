@@ -1,15 +1,19 @@
 { config, lib, ... }:
 let
   secret = name: config.sops.placeholder."ntfy/${name}";
+  host = "ntfy.${config.homelab.domain}";
+  listen = "127.0.0.1:2586";
 in
 {
   services.ntfy-sh = {
     enable = true;
     settings = {
-      # Placeholder until ntfy is exposed through the reverse proxy. It must then
-      # be the URL clients use, since iOS push derives its topics from it.
-      base-url = "http://localhost:2586";
-      listen-http = "127.0.0.1:2586";
+      # The URL clients use; iOS push derives its topics from it.
+      base-url = "https://${host}";
+      listen-http = listen;
+      # Rate-limit by the client address Caddy puts in X-Forwarded-For, not by
+      # Caddy's own 127.0.0.1. Caddy overwrites any client-supplied value.
+      behind-proxy = true;
       auth-default-access = "deny-all";
       # Every ntfy identity and its access lives in this file, so it is the one
       # place to audit. Users and tokens are secrets and come from sops below.
@@ -28,6 +32,23 @@ in
       NTFY_AUTH_TOKENS='upgrade-notifier:${secret "upgrade-notifier-token"}:upgrade-alert'
     '';
     restartUnits = [ "ntfy-sh.service" ];
+  };
+
+  services.caddy.virtualHosts.${host} = {
+    useACMEHost = "wildcard";
+    extraConfig = "reverse_proxy ${listen}";
+    # ntfy accepts credentials as a query parameter (the web app uses it for
+    # subscriptions); keep them out of the access log. Caddy already redacts
+    # the Authorization header.
+    logFormat = ''
+      output file ${config.services.caddy.logDir}/access-${host}.log
+      format filter {
+        request>uri query {
+          delete auth
+          delete authorization
+        }
+      }
+    '';
   };
 
   # Tighten the upstream module's sandbox.
@@ -54,8 +75,8 @@ in
       "~@privileged"
     ];
     UMask = "0077";
-    # Localhost-only for now. Opening this up (iOS upstream, reverse proxy on
-    # another host) is part of exposing ntfy.
+    # Clients reach ntfy only through Caddy on this host. Setting
+    # upstream-base-url (instant iOS push via ntfy.sh) would need egress here.
     IPAddressAllow = "localhost";
     IPAddressDeny = "any";
   };

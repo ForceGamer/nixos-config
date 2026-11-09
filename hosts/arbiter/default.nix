@@ -12,6 +12,7 @@
     ../../modules/upgrade-alert.nix
     ../../modules/wireguard.nix
     ../../modules/claude-vm.nix
+    ../../modules/services/caddy.nix
     ../../modules/services/ntfy.nix
   ];
 
@@ -19,6 +20,10 @@
 
   # Encrypted with sops; decrypted at activation with the SSH host key.
   sops.defaultSopsFile = ./secrets.yaml;
+
+  # DNS at Cloudflare. The apex and *.gameforce.me point at ARBITER's LAN
+  # address; only tun.gameforce.me (DDNS, WireGuard) points at the WAN.
+  homelab.domain = "gameforce.me";
 
   homelab.admin = {
     name = "admin";
