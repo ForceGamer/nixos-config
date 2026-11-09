@@ -42,11 +42,11 @@
       search = "(?i)\\b${config.sops.placeholder."contextforge/school-name"}\\b";
       replace = "[SCHOOL]";
     }
-    {
-      # ISO 8601 timestamps, e.g. 2026-11-09T00:00:00Z
-      search = "\\b\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):?[0-5]\\d)\\b";
-      replace = "[TIMESTAMP]";
-    }
+    #{
+    #  # ISO 8601 timestamps, e.g. 2026-11-09T00:00:00Z
+    #  search = "\\b\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):?[0-5]\\d)\\b";
+    #  replace = "[TIMESTAMP]";
+    #}
   ];
 
   homelab.admin = {
