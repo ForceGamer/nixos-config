@@ -59,7 +59,12 @@ let
         hooks = postHooks;
         mode = "enforce";
         priority = 40;
-        config.words = cfg.pseudonyms;
+        # Every rule is case-insensitive, like the PII filter's own patterns,
+        # unless it opens with its own inline flags.
+        config.words = map (p: {
+          search = (if lib.hasPrefix "(?" p.search then "" else "(?i)") + p.search;
+          inherit (p) replace;
+        }) cfg.pseudonyms;
       }
       {
         name = "PIIFilter";
@@ -159,7 +164,7 @@ in
               };
             };
             config.search = lib.mkIf (config.secret != null) (
-              lib.mkDefault "(?i)\\b${placeholder config.secret}\\b"
+              lib.mkDefault "\\b${placeholder config.secret}\\b"
             );
           }
         )
