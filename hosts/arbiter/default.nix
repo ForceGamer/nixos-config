@@ -21,8 +21,9 @@
   # Encrypted with sops; decrypted at activation with the SSH host key.
   sops.defaultSopsFile = ./secrets.yaml;
 
-  # Registered at Cloudflare; services get subdomains of it (ntfy.<DOMAIN>).
-  homelab.domain = "<DOMAIN>";
+  # DNS at Cloudflare. The apex and *.gameforce.me point at ARBITER's LAN
+  # address; only tun.gameforce.me (DDNS, WireGuard) points at the WAN.
+  homelab.domain = "gameforce.me";
 
   homelab.admin = {
     name = "admin";

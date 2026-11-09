@@ -1,5 +1,6 @@
 # WireGuard road-warrior VPN into the home LAN, terminated on this host.
 # Server public key (for client configs): WyxmP+q2ILYI4iISn/T7Ht3WLAwAvXhyZSAetXUNkh8=
+# Client Endpoint: tun.gameforce.me:51820 (the only DDNS name; Cloudflare).
 {
   config,
   lib,

@@ -52,7 +52,15 @@ in
       '';
     };
 
-    networking.firewall.allowedTCPPorts = [ 443 ];
+    # Services are for the home LAN and WireGuard peers only; nothing but
+    # WireGuard is port-forwarded. Matching on private source addresses (not
+    # on interface) keeps that true on the host even if a forward for 443 is
+    # ever added in UniFi, since port forwards keep the public source address.
+    # The Claude VM's 10.101.0.0/24 is private too, but its own input chain
+    # drops it first. IPv4 only: the DNS records are A records.
+    networking.firewall.extraInputRules = ''
+      tcp dport 443 ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } accept comment "caddy: LAN and wg peers only"
+    '';
 
     # Tighten the upstream unit (which grants CAP_NET_ADMIN for QUIC buffers).
     systemd.services.caddy.serviceConfig = {
