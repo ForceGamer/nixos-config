@@ -8,7 +8,7 @@ has been deployed. The steps below are the parts only you can do.
 ## What it does
 
 ```
-claude.ai / Claude Code ──TLS tun.gameforce.me:47231──▶ Caddy ──▶ ContextForge ──▶ Fastmail MCP
+claude.ai / Claude Code ──TLS tun.gameforce.me:443 (router → ARBITER:47231)──▶ Caddy ──▶ ContextForge ──▶ Fastmail MCP
                                                       /servers/* + Bearer   │          Obsidian MCP
                                                       header only; all      ▼
                                                       else dropped    tool result → Pseudonyms → PIIFilter → client
@@ -55,9 +55,11 @@ claude.ai / Claude Code ──TLS tun.gameforce.me:47231──▶ Caddy ──�
   binary.
   - `https://mcp-admin.gameforce.me` (port 443, LAN and WireGuard only, as all
     443 traffic): the full gateway, including the admin UI at `/admin`.
-  - `https://tun.gameforce.me:47231` (internet): the WireGuard hostname, which
-    is already public on the WAN IP, on a non-standard port
-    (`homelab.contextforge.publicPort`). Only `/servers/*` (the
+  - `https://tun.gameforce.me` (internet, WAN 443 → ARBITER 47231): the
+    WireGuard hostname, which is already public on the WAN IP. On the host it
+    is `homelab.contextforge.publicPort`; externally it has to be 443 because
+    claude.ai's connector backend can't reach any other port (tested).
+    Only `/servers/*` (the
     per-virtual-server MCP endpoints) is proxied, and only when the request
     carries an `Authorization: Bearer …` header at all. Everything else is
     **aborted**: Caddy closes the connection without sending a byte, so a
@@ -145,20 +147,35 @@ push, `nixos-rebuild test`, and check a tool result in the admin UI shows the
 label. Hash pseudonyms reset when the container restarts for the new config.
 To store a regex instead of a literal name, use `./add-pii.sh -r <key>`.
 
+Two rules for the list itself:
+
+- **Order matters.** Rules run top to bottom, each on the previous one's
+  output. A value that contains another value must come first (full name
+  before surname, long employer name before its abbreviation, street address
+  before town), or the shorter rule fires first and the longer one never
+  matches, leaving the rest visible.
+- **Hand-written regexes are checked at build time.** The plugin silently
+  skips a regex that doesn't compile, so `nix flake check` compiles every
+  rule with Python and fails on the first bad one. Remember Nix string
+  escaping: `\\b`, `\\d`, `\\.`, `\\$` (a bare `$` in a regex is the
+  end-of-line anchor, not a dollar sign). Every rule is case-insensitive
+  unless it starts with its own `(?...)` flags.
+
 ## 2. DNS and the router
 
 - **Cloudflare:** nothing to add. `tun.gameforce.me` already points at the WAN
   IP via DDNS, and the wildcard certificate covers it (and `mcp-admin`). No
   new name appears in public DNS or in Certificate Transparency.
-- **UniFi:** add a port forward **TCP 47231 (WAN) → ARBITER TCP 47231**, next
-  to the existing UDP 51820 one. Same port on both sides, so there is one
-  number to remember; if you change `homelab.contextforge.publicPort`, change
-  the forward too. The clients here are Anthropic's servers and your own
-  machines, so a non-standard port costs nothing in reachability; it just
-  keeps the port out of mass scans of the usual HTTPS ports.
-- From inside the LAN, `tun.gameforce.me:47231` resolves to the WAN IP and
-  comes back in through UniFi's hairpin NAT. That's expected; use `mcp-admin`
-  for the admin UI.
+- **UniFi:** a port forward **TCP 443 (WAN) → ARBITER TCP 47231**, next to
+  the existing UDP 51820 one. A non-standard external port would keep the
+  service out of mass scans, but claude.ai custom connectors refuse to
+  connect to anything but 443 ("Couldn't connect", and no packet ever
+  arrives), so 443 it is; the decoy certificate, the silent drops and
+  fail2ban still apply. If you change `homelab.contextforge.publicPort`,
+  change the forward's internal port too.
+- From inside the LAN, `tun.gameforce.me` resolves to the WAN IP and comes
+  back in through UniFi's hairpin NAT. That's expected; use `mcp-admin` for
+  the admin UI.
 
 This is the second thing exposed, after WireGuard, on the same hostname.
 
@@ -185,10 +202,10 @@ From TEMPLAR, confirm the outside view (each command's expected result in
 the comment; the first three go through the router's hairpin NAT):
 
 ```sh
-openssl s_client -connect tun.gameforce.me:47231 -noservername </dev/null 2>/dev/null | grep subject=   # CN=localhost (decoy)
-openssl s_client -connect tun.gameforce.me:47231 </dev/null 2>/dev/null | grep subject=                 # CN=*.gameforce.me
-curl -sSi https://tun.gameforce.me:47231/servers/x/mcp; echo "exit=$?"                                 # no response; exit 92 (h2) or 52/56 (h1): dropped
-curl -sSi -H 'Authorization: Bearer x' https://tun.gameforce.me:47231/servers/x/mcp | head -1          # HTTP/2 401 (gateway)
+openssl s_client -connect tun.gameforce.me:443 -noservername </dev/null 2>/dev/null | grep subject=   # CN=localhost (decoy)
+openssl s_client -connect tun.gameforce.me:443 </dev/null 2>/dev/null | grep subject=                 # CN=*.gameforce.me
+curl -sSi https://tun.gameforce.me/servers/x/mcp; echo "exit=$?"                                     # no response; exit 92 (h2) or 52/56 (h1): dropped
+curl -sSi -H 'Authorization: Bearer x' https://tun.gameforce.me/servers/x/mcp | head -1              # HTTP/2 401 (gateway)
 curl -sS https://mcp-admin.gameforce.me/health                                                         # ok
 ```
 
@@ -221,11 +238,12 @@ each detection as a type and count, never the value:
 ## 5. Connect a client
 
 - **claude.ai → Settings → Connectors → Add custom connector:** URL
-  `https://tun.gameforce.me:47231/servers/<UUID>/mcp`, and under *Request
+  `https://tun.gameforce.me/servers/<UUID>/mcp` (no port: claude.ai only
+  reaches servers on 443, which is why the router maps 443 → 47231), and under *Request
   headers* add `Authorization` with the value `Bearer <token>` (the `Bearer `
   prefix is required; without the header Caddy drops the connection before
   the gateway ever sees it). No OAuth needed.
-- **Claude Code:** `claude mcp add --transport http fastmail https://tun.gameforce.me:47231/servers/<UUID>/mcp --header "Authorization: Bearer <token>"`.
+- **Claude Code:** `claude mcp add --transport http fastmail https://tun.gameforce.me/servers/<UUID>/mcp --header "Authorization: Bearer <token>"`.
 
 Anyone holding the token can call the tools as you, so treat it like a
 password and rotate it from the admin UI if in doubt.

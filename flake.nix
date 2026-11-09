@@ -39,6 +39,11 @@
         ];
       };
 
+      # The gateway's regex filter silently skips a rule that doesn't compile;
+      # fail here instead.
+      checks.x86_64-linux.contextforge-pseudonyms =
+        self.nixosConfigurations.arbiter.config.homelab.contextforge.pseudonymsCheck;
+
       # nixfmt's own wrapper for `nix fmt`; bare nixfmt no longer accepts
       # directories. Anchor the tree root on flake.nix so formatting never
       # wanders outside the repo when it isn't a git checkout.

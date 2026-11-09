@@ -28,8 +28,8 @@
   # address; only tun.gameforce.me (DDNS, WireGuard) points at the WAN.
   homelab.domain = "gameforce.me";
 
-  # The router forwards this same port from the WAN. Picked at random from the
-  # ephemeral range; change it freely, Caddy and the firewall follow.
+  # The router forwards WAN 443 here (claude.ai can't reach other ports). Any
+  # free port works; Caddy and the firewall follow.
   homelab.contextforge.publicPort = 47231;
 
   # Names the generic PII patterns can't know, replaced in every tool result
@@ -37,35 +37,13 @@
   # contextforge/ whose value is matched case-insensitively as whole words;
   # add one with ./add-pii.sh. `search` takes a raw Python regex instead, for
   # patterns that aren't secret.
+  # Rules run in this order, each on the output of the previous one, so a
+  # name that contains another must come first: full names before surname,
+  # the long employer name before its short form, the address before the
+  # town. Otherwise the shorter rule fires first and the longer never matches.
+  # `nix flake check` compiles every regex; the plugin would silently skip a
+  # broken one.
   homelab.contextforge.pseudonyms = [
-    {
-      secret = "school-name";
-      replace = "[SCHOOL]";
-    }
-    {
-      # Order/tracking/invoice/booking numbers: a label (EN/NO) followed by a
-      # 5–30 char alphanumeric token with at least one digit. Keeps the label.
-      search = "(?i)\\b((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?\\s*[#:]?\\s*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9-]*\\d)[A-Z0-9][A-Z0-9-]{4,29}\\b";
-      replace = "\\1[ORDER]";
-    }
-    {
-      secret = "middlename";
-      replace = "[MIDDLE_NAME]";
-    }
-
-    {
-      secret = "surname";
-      replace = "[SURNAME]";
-    }
-
-    {
-      secret = "employer-short";
-      replace = "[EMPLOYER_SHORT]";
-    }
-    {
-      secret = "employer";
-      replace = "[EMPLOYER]";
-    }
     {
       secret = "decree-yonder";
       replace = "[NAME]";
@@ -74,7 +52,22 @@
       secret = "ivy-pork";
       replace = "[NAME]";
     }
-
+    {
+      secret = "middlename";
+      replace = "[MIDDLE_NAME]";
+    }
+    {
+      secret = "surname";
+      replace = "[SURNAME]";
+    }
+    {
+      secret = "employer";
+      replace = "[EMPLOYER]";
+    }
+    {
+      secret = "employer-short";
+      replace = "[EMPLOYER_SHORT]";
+    }
     {
       secret = "home";
       replace = "[HOME]";
@@ -84,15 +77,29 @@
       replace = "[HOME]";
     }
     {
-      search = "([0-9]*\.[0-9]+\s+(?:USDG|LTC|BTC)";
-      replace = "[CRYPTO_AMOUNT]";
+      secret = "school-name";
+      replace = "[SCHOOL]";
     }
     {
+      # Order/tracking/invoice/booking numbers: a label (EN/NO) followed by a
+      # 5–30 char alphanumeric token with at least one digit. Keeps the label.
+      search = "\\b((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?\\s*[#:]?\\s*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9-]*\\d)[A-Z0-9][A-Z0-9-]{4,29}\\b";
+      replace = "\\1[ORDER]";
+    }
+    {
+      # Numeric cells in HTML mail, e.g. order ids in a table.
       search = ">[0-9]+</div>";
       replace = ">[ORDER_ID]</div>";
     }
     {
-      search = "(?:€|$)[0-9]*\\.[0-9]+";
+      # Crypto amounts: the number before a ticker, keeping the ticker.
+      search = "\\b[0-9]*\\.?[0-9]+(?=\\s+(?:USDG|LTC|BTC)\\b)";
+      replace = "[CRYPTO_AMOUNT]";
+    }
+    {
+      # Money: a currency sign before the number, or kr/NOK/€ after it. `$`
+      # must be escaped; bare it is the end-of-line anchor.
+      search = "(?:€|\\$|£)\\s?[0-9][0-9 .,]*[0-9]|(?:€|\\$|£)[0-9]|\\b[0-9][0-9 .,]*[0-9]\\s?(?:€|kr|NOK)\\b|\\b[0-9]\\s?(?:€|kr|NOK)\\b";
       replace = "[AMOUNT]";
     }
 
