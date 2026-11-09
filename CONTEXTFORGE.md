@@ -116,12 +116,34 @@ contextforge:
   created in the UI. No account gets one here (registration is off), but the
   gateway refuses to start unless it passes the same 12-character check as
   the admin password; its built-in default doesn't.
-- `school-name` is used as a Python regex (`(?i)\b<name>\b`). Plain words are
-  fine; escape `.`, `(` and the like with a backslash if the name has them.
-  Add more rules to `homelab.contextforge.pseudonyms` the same way; each one
-  needs its own sops key.
+- `school-name` is matched case-insensitively as whole words wherever it
+  appears in a tool result. Set it with `./add-pii.sh school-name "[SCHOOL]"`
+  rather than by hand: the script reads the value from the terminal (so it
+  stays out of shell history) and escapes regex metacharacters, so a name
+  like `St. Olav (Oslo)` matches literally.
 - The build fails until all five keys exist (sops-nix checks the file at build
   time), same as the pending `cloudflare/dns-api-token`.
+
+### Adding another name later
+
+```sh
+./add-pii.sh employer "[EMPLOYER]"     # prompts for the value
+```
+
+Then add the entry it prints to `homelab.contextforge.pseudonyms` in
+`hosts/arbiter/default.nix`:
+
+```nix
+{
+  secret = "employer";
+  replace = "[EMPLOYER]";
+}
+```
+
+The module declares the sops secret and builds the regex from it. Commit,
+push, `nixos-rebuild test`, and check a tool result in the admin UI shows the
+label. Hash pseudonyms reset when the container restarts for the new config.
+To store a regex instead of a literal name, use `./add-pii.sh -r <key>`.
 
 ## 2. DNS and the router
 
@@ -165,7 +187,7 @@ the comment; the first three go through the router's hairpin NAT):
 ```sh
 openssl s_client -connect tun.gameforce.me:47231 -noservername </dev/null 2>/dev/null | grep subject=   # CN=localhost (decoy)
 openssl s_client -connect tun.gameforce.me:47231 </dev/null 2>/dev/null | grep subject=                 # CN=*.gameforce.me
-curl -sSi https://tun.gameforce.me:47231/servers/x/mcp; echo "exit=$?"                                 # no output, exit 52 or 56 (dropped)
+curl -sSi https://tun.gameforce.me:47231/servers/x/mcp; echo "exit=$?"                                 # no response; exit 92 (h2) or 52/56 (h1): dropped
 curl -sSi -H 'Authorization: Bearer x' https://tun.gameforce.me:47231/servers/x/mcp | head -1          # HTTP/2 401 (gateway)
 curl -sS https://mcp-admin.gameforce.me/health                                                         # ok
 ```

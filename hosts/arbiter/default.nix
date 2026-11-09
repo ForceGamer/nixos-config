@@ -28,18 +28,18 @@
   # address; only tun.gameforce.me (DDNS, WireGuard) points at the WAN.
   homelab.domain = "gameforce.me";
 
-  # Names the generic PII patterns can't know, replaced in every tool result
-  # before it reaches an AI client. The values live in sops
-  # (`contextforge/school-name`), not here; add one entry per name. The
-  # search is a Python regex, so escape metacharacters in the sops value if
-  # the name has any.
   # The router forwards this same port from the WAN. Picked at random from the
   # ephemeral range; change it freely, Caddy and the firewall follow.
   homelab.contextforge.publicPort = 47231;
 
+  # Names the generic PII patterns can't know, replaced in every tool result
+  # before it reaches an AI client. `secret` names a sops key under
+  # contextforge/ whose value is matched case-insensitively as whole words;
+  # add one with ./add-pii.sh. `search` takes a raw Python regex instead, for
+  # patterns that aren't secret.
   homelab.contextforge.pseudonyms = [
     {
-      search = "(?i)\\b${config.sops.placeholder."contextforge/school-name"}\\b";
+      secret = "school-name";
       replace = "[SCHOOL]";
     }
     #{
