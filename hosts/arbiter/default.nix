@@ -44,6 +44,10 @@
   # `nix flake check` compiles every regex; the plugin would silently skip a
   # broken one.
   homelab.contextforge.pseudonyms = [
+    { # Keep above others
+      secret = "home-full";
+      replace = "[HOME]";
+    }
     {
       secret = "decree-yonder";
       replace = "[NAME]";
@@ -79,6 +83,10 @@
     {
       secret = "school-name";
       replace = "[SCHOOL]";
+    }
+    {
+      secret = "post-code";
+      replace = "[POST_CODE]";
     }
     {
       # Order/tracking/invoice/booking numbers: a label (EN/NO) followed by a
