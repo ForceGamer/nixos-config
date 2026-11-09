@@ -6,7 +6,7 @@
 #
 # Two faces, both on this host:
 #   https://mcp-admin.<domain>      LAN and WireGuard only (admin UI and API).
-#   https://mcp.<domain>:8443       Internet; only /servers/*/mcp is proxied.
+#   https://tun.<domain>:8443       Internet; only /servers/*/mcp is proxied.
 # Clients authenticate with a ContextForge bearer token; fail2ban bans sources
 # that keep producing 401/403/404 on the public port.
 {
@@ -19,7 +19,7 @@ let
   cfg = config.homelab.contextforge;
   domain = config.homelab.domain;
   adminHost = "mcp-admin.${domain}";
-  publicHost = "mcp.${domain}";
+  publicHost = "tun.${domain}";
   publicPort = 8443;
   upstream = "127.0.0.1:4444";
   user = "contextforge";
