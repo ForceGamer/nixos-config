@@ -1,13 +1,42 @@
 # Caddy as the TLS-terminating reverse proxy. Each service module adds its own
 # virtual host on a subdomain of homelab.domain, with useACMEHost = "wildcard".
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   domain = config.homelab.domain;
+  # Served to TLS clients that send no SNI or an unknown one (port scanners,
+  # bare-IP probes). Without it Caddy falls back to the only real certificate
+  # and hands `*.gameforce.me` to anyone who connects to an open port. Looks
+  # like a stock dev server; proves nothing, so the key may live in the store.
+  # `decoy.invalid` is the lookup name; `localhost` alone would make Caddy try
+  # its internal CA instead of this file.
+  decoyCert =
+    pkgs.runCommand "caddy-decoy-cert"
+      {
+        nativeBuildInputs = [ pkgs.openssl ];
+      }
+      ''
+        mkdir "$out"
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+          -keyout "$out/key.pem" -out "$out/cert.pem" -days 3650 \
+          -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:decoy.invalid"
+      '';
 in
 {
   options.homelab.domain = lib.mkOption {
     type = lib.types.str;
     description = "Domain whose subdomains name the services behind Caddy.";
+  };
+
+  options.homelab.caddy.decoyCert = lib.mkOption {
+    type = lib.types.package;
+    default = decoyCert;
+    readOnly = true;
+    description = "Directory with cert.pem/key.pem for catch-all sites on internet-facing ports.";
   };
 
   config = {
@@ -48,7 +77,16 @@ in
         # No HTTP/3, so no UDP listener and no UDP port to open.
         servers {
           protocols h1 h2
+          # Host header must equal the SNI, else 421. Otherwise an HTTP/2
+          # request with the right SNI and a foreign :authority slips past
+          # every site's host matcher and gets Caddy's empty 200 (verified).
+          strict_sni_host on
         }
+        # Certificate for clients with no or unknown SNI: the decoy above, not
+        # the wildcard. Applies on every port; a LAN client hitting the bare
+        # IP sees the decoy and a 421, which is fine.
+        default_sni decoy.invalid
+        fallback_sni decoy.invalid
       '';
     };
 

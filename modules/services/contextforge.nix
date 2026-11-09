@@ -5,10 +5,13 @@
 # search-and-replace list for names that no generic pattern can catch.
 #
 # Two faces, both on this host:
-#   https://mcp-admin.<domain>      LAN and WireGuard only (admin UI and API).
-#   https://tun.<domain>:8443       Internet; only /servers/*/mcp is proxied.
+#   https://mcp-admin.<domain>        LAN and WireGuard only (admin UI and API).
+#   https://tun.<domain>:<publicPort> Internet; only /servers/* with a bearer
+#                                     header is proxied. Everything else is
+#                                     dropped without a response, and clients
+#                                     without the hostname get a decoy cert.
 # Clients authenticate with a ContextForge bearer token; fail2ban bans sources
-# that keep producing 401/403/404 on the public port.
+# that keep hitting the public port without one.
 {
   config,
   lib,
@@ -19,8 +22,11 @@ let
   cfg = config.homelab.contextforge;
   domain = config.homelab.domain;
   adminHost = "mcp-admin.${domain}";
+  # Shares the WireGuard name: already in public DNS on the WAN IP via DDNS,
+  # so no new record hints at a web service.
   publicHost = "tun.${domain}";
-  publicPort = 8443;
+  publicPort = cfg.publicPort;
+  decoy = config.homelab.caddy.decoyCert;
   upstream = "127.0.0.1:4444";
   user = "contextforge";
   home = "/var/lib/${user}";
@@ -106,6 +112,15 @@ let
 in
 {
   options.homelab.contextforge = {
+    publicPort = lib.mkOption {
+      type = lib.types.port;
+      default = 8443;
+      description = ''
+        TCP port Caddy serves the MCP endpoint on, and the port the router
+        forwards to. Non-standard on purpose: mass scanners rarely look
+        beyond the usual HTTPS ports, so fewer probes reach the host at all.
+      '';
+    };
     image = lib.mkOption {
       type = lib.types.str;
       # v1.1.0 (2026-10-20). The digest is the multi-arch index; podman picks
@@ -255,8 +270,12 @@ in
       '';
     };
 
-    # Public side: only the MCP endpoints of virtual servers. Everything else
-    # is answered here with 404 and never reaches the gateway.
+    # Public side: only the MCP endpoints of virtual servers, and only for
+    # requests that carry a bearer header at all. Anything else is dropped
+    # with `abort` (connection closed, no bytes), so a probe learns nothing,
+    # not even that an HTTP server answers. The gateway still validates the
+    # token; Caddy only checks that one is present. Caddy logs aborted
+    # requests with status 0, which the jail below counts.
     services.caddy.virtualHosts."${publicHost}:${toString publicPort}" = {
       useACMEHost = "wildcard";
       logFormat = ''
@@ -266,6 +285,11 @@ in
         request_body {
           max_size 2MB
         }
+        header -Server
+        @noauth not header Authorization Bearer*
+        handle @noauth {
+          abort
+        }
         @mcp path /servers/*
         handle @mcp {
           reverse_proxy ${upstream} {
@@ -273,19 +297,34 @@ in
           }
         }
         handle {
-          respond 404
+          abort
         }
+      '';
+    };
+
+    # Catch-all on the same port for any other or no SNI: presents the decoy
+    # certificate instead of the wildcard and drops the request. Shares the
+    # access log so the jail sees these probes too.
+    services.caddy.virtualHosts.":${toString publicPort}" = {
+      logFormat = ''
+        output file ${accessLog}
+      '';
+      extraConfig = ''
+        tls ${decoy}/cert.pem ${decoy}/key.pem
+        abort
       '';
     };
 
     # The one port besides WireGuard that the router forwards.
     networking.firewall.allowedTCPPorts = [ publicPort ];
 
-    # Repeated 401/403/404 on the public port from one address: scanner or a
-    # misconfigured client. Private sources are in fail2ban's ignoreIP.
+    # Repeated junk on the public port from one address: scanner or a
+    # misconfigured client. 0 = dropped by Caddy (no bearer header, wrong path,
+    # unknown SNI), 421 = Host didn't match the SNI, 401/403/404 = the gateway
+    # rejected it. Private sources are in fail2ban's ignoreIP.
     services.fail2ban.jails.contextforge = {
       filter.Definition = {
-        failregex = ''^.*"request":\{"remote_ip":"<HOST>",.*"status":(?:401|403|404),'';
+        failregex = ''^.*"request":\{"remote_ip":"<HOST>",.*"status":(?:0|401|403|404|421),'';
         datepattern = ''^.*"ts":{EPOCH}'';
       };
       settings = {
@@ -293,7 +332,7 @@ in
         backend = "auto";
         maxretry = 5;
         findtime = "10m";
-        # Drop the source everywhere, not just on 8443.
+        # Drop the source everywhere, not just on the public port.
         banaction = "%(banaction_allports)s";
       };
     };

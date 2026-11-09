@@ -33,6 +33,10 @@
   # (`contextforge/school-name`), not here; add one entry per name. The
   # search is a Python regex, so escape metacharacters in the sops value if
   # the name has any.
+  # The router forwards this same port from the WAN. Picked at random from the
+  # ephemeral range; change it freely, Caddy and the firewall follow.
+  homelab.contextforge.publicPort = 47231;
+
   homelab.contextforge.pseudonyms = [
     {
       search = "(?i)\\b${config.sops.placeholder."contextforge/school-name"}\\b";
