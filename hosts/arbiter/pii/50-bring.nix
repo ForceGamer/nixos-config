@@ -5,12 +5,16 @@
 {
   name = "bring";
   when = {
-    from = "\\bbring\\b";
+    from = "\\b(:?bring|posten)\\b";
     subject = null;
   };
   rules = [
     {
       search = "(bring\\.no/s/)[A-Za-z0-9]+";
+      replace = "\\1[TRACKING]";
+    }
+    {
+      search = "(mmer\\s+)[0-9]+"; # Matches "Sporingsnummer 123456789"
       replace = "\\1[TRACKING]";
     }
   ];
