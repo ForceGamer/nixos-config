@@ -11,7 +11,7 @@ has been deployed. The steps below are the parts only you can do.
 claude.ai / Claude Code ──TLS tun.gameforce.me:443 (router → ARBITER:47231)──▶ Caddy ──▶ ContextForge ──▶ Fastmail MCP
                                                       /servers/* + Bearer   │          Obsidian MCP
                                                       header only; all      ▼
-                                                      else dropped    tool result → Pseudonyms → PIIFilter → client
+                                                      else dropped    tool result → ScopedFilter → PIIFilter → client
 ```
 
 - **Gateway:** `ghcr.io/ibm/mcp-context-forge`, v1.1.0, pinned by digest, as a
@@ -21,11 +21,13 @@ claude.ai / Claude Code ──TLS tun.gameforce.me:443 (router → ARBITER:47231
 - **Scrubbing** happens in ContextForge's plugin framework, on every tool
   result and rendered prompt (`tool_post_invoke`, `prompt_post_fetch`), before
   it leaves the gateway:
-  1. **Pseudonyms** (`regex_filter` plugin): your own search-and-replace list,
-     set in `hosts/arbiter/default.nix` under `homelab.contextforge.pseudonyms`.
-     The shipped example replaces a school's name with `[SCHOOL]`; the name
-     itself is the sops secret `contextforge/school-name`, so it never appears
-     in the repo or the Nix store.
+  1. **ScopedFilter** (our own plugin, `modules/services/contextforge/`):
+     your search-and-replace rules, one group per file in
+     `hosts/arbiter/pii/`, applied in filename order. A group is global or
+     scoped to an email's sender/subject (see "Rule files" below). Names and
+     places come from sops secrets (`contextforge/school-name`, …), so they
+     never appear in the repo or the Nix store; the rule replaces them with a
+     label like `[SCHOOL]`.
   2. **PIIFilter** (`cpex_pii_filter`, Rust): e-mail addresses, phone numbers
      (US, `+<cc>…`, and Norwegian 8-digit with or without `+47`), credit cards
      (Luhn-checked), IBANs and "account <digits>", dates of birth, and
@@ -132,8 +134,8 @@ contextforge:
 ./add-pii.sh employer "[EMPLOYER]"     # prompts for the value
 ```
 
-Then add the entry it prints to `homelab.contextforge.pseudonyms` in
-`hosts/arbiter/default.nix`:
+Then add the entry it prints to the right group in `hosts/arbiter/pii/`
+(`10-people.nix` for a person or place):
 
 ```nix
 {
@@ -147,19 +149,54 @@ push, `nixos-rebuild test`, and check a tool result in the admin UI shows the
 label. Hash pseudonyms reset when the container restarts for the new config.
 To store a regex instead of a literal name, use `./add-pii.sh -r <key>`.
 
-Two rules for the list itself:
+### Rule files
 
-- **Order matters.** Rules run top to bottom, each on the previous one's
-  output. A value that contains another value must come first (full name
-  before surname, long employer name before its abbreviation, street address
-  before town), or the shorter rule fires first and the longer one never
-  matches, leaving the rest visible.
-- **Hand-written regexes are checked at build time.** The plugin silently
-  skips a regex that doesn't compile, so `nix flake check` compiles every
-  rule with Python and fails on the first bad one. Remember Nix string
-  escaping: `\\b`, `\\d`, `\\.`, `\\$` (a bare `$` in a regex is the
-  end-of-line anchor, not a dollar sign). Every rule is case-insensitive
-  unless it starts with its own `(?...)` flags.
+`hosts/arbiter/pii/*.nix`, one rule group each, loaded in filename order
+(`homelab.contextforge.rulesDir`). A file looks like:
+
+```nix
+{
+  name = "shop-x";                        # label in test output
+  when = {                                # null = global, always applied
+    from = "@shop-x\\.example$";          # regex on the sender (any, if null)
+    subject = null;                       # regex on the subject (any, if null)
+  };
+  rules = [
+    { search = ">[0-9]+</div>"; replace = ">[ORDER_ID]</div>"; }   # Python regex
+    { secret = "shop-x-customer-no"; replace = "[CUSTOMER_NO]"; } # from sops
+  ];
+  examples = [                            # run by `nix flake check`
+    { from = "orders@shop-x.example"; input = "<div>4471023</div>"; expect = "<div>[ORDER_ID]</div>"; }
+    { from = "friend@mail.example";   input = "<div>4471023</div>"; expect = "<div>4471023</div>"; }
+  ];
+}
+```
+
+How scoping behaves, and the one rule that keeps it safe:
+
+- A scoped group applies to an email whose sender *and* subject match its
+  regexes. The plugin finds them in structured results (`from`/`subject`
+  keys, also inside JSON carried in a text block, each email in a list on
+  its own) and in plain text with `From:`/`Subject:` lines.
+- **Where it can't recognise an email, every group applies.** Scoping may
+  add aggressive rules to a known context; it never removes protection from
+  an unknown one. So put everything that protects a *person* in a global
+  group; scope only precision rules (merchant layouts, order ids, amounts)
+  that would misfire elsewhere.
+- **Order matters.** Groups run in filename order and rules top to bottom,
+  each on the previous output. A value that contains another must come first
+  (full name before surname, long employer name before its abbreviation,
+  address before town), or the shorter rule fires first and the longer one
+  never matches, leaving the rest visible.
+- **Everything is tested at build time.** `nix flake check` runs the
+  plugin's unit tests and then every `examples` entry through the real rule
+  set (with each secret replaced by `SECRET_` + its key in UPPER_SNAKE, e.g.
+  `SECRET_HOME_FULL`; use that spelling in examples, never real data). A
+  regex that doesn't compile fails the check, and would also stop the gateway
+  from starting; the stock plugin would have skipped it silently. Remember
+  Nix string escaping: `\\b`, `\\d`, `\\.`, `\\$` (a bare `$` is the
+  end-of-line anchor). Every rule is case-insensitive unless it opens with
+  its own `(?...)` flags.
 
 ## 2. DNS and the router
 

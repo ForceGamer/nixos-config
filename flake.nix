@@ -39,10 +39,10 @@
         ];
       };
 
-      # The gateway's regex filter silently skips a rule that doesn't compile;
-      # fail here instead.
-      checks.x86_64-linux.contextforge-pseudonyms =
-        self.nixosConfigurations.arbiter.config.homelab.contextforge.pseudonymsCheck;
+      # Unit tests of the PII rule engine, plus the examples declared next to
+      # ARBITER's rules, against the rendered configuration.
+      checks.x86_64-linux.contextforge-filter =
+        self.nixosConfigurations.arbiter.config.homelab.contextforge.check;
 
       # nixfmt's own wrapper for `nix fmt`; bare nixfmt no longer accepts
       # directories. Anchor the tree root on flake.nix so formatting never
