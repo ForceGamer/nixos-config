@@ -19,6 +19,10 @@
       replace = "[HOME]";
     }
     {
+      secret = "post-office";
+      replace = "[POST_OFFICE]";
+    }
+    {
       secret = "decree-yonder";
       replace = "[NAME]";
     }
@@ -26,6 +30,11 @@
       secret = "ivy-pork";
       replace = "[NAME]";
     }
+    {
+      secret = "first-name";
+      replace = "[NAME]";
+    }
+
     {
       secret = "middlename";
       replace = "[MIDDLE_NAME]";
