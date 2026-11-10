@@ -15,9 +15,9 @@
     }
     {
       # The global identifiers group (20) has already turned the number
-      # after "Sporingsnummer" into [ORDER] by the time this group runs;
-      # this only relabels it.
-      search = "(sporingsnummer:?\\s+)\\[ORDER\\]";
+      # after "Sporingsnummer" into [ORDER] or [LONG_ID] by the time this
+      # group runs; this only relabels it.
+      search = "(sporingsnummer:?\\s+)\\[(?:ORDER|LONG_ID)\\]";
       replace = "\\1[TRACKING]";
     }
   ];
