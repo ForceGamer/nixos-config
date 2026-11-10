@@ -35,6 +35,14 @@
       replace = "[SURNAME]";
     }
     {
+      secret = "county";
+      replace = "[COUNTY]";
+    }
+    {
+      secret = "city";
+      replace = "[CITY]";
+    }
+    {
       secret = "employer";
       replace = "[EMPLOYER]";
     }
