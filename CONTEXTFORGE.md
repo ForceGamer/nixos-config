@@ -198,6 +198,30 @@ How scoping behaves, and the one rule that keeps it safe:
   end-of-line anchor). Every rule is case-insensitive unless it opens with
   its own `(?...)` flags.
 
+### Finding what the rules miss
+
+`tools/pii-survey.py` fetches emails through the gateway (so names are
+already hashed and known identifiers already show as labels), finds every
+candidate identifier deterministically, optionally has a local Ollama model
+label them, and prints a report that carries no raw values: per email the
+sender's display name (the address is hashed by then; `when.from` matches
+the name), the subject with identifiers masked, and each candidate as a
+shape mask (digits → `9`, `A-Z` → `A`, `a-z` → `a`), a kind, where it was
+found, how often, and a masked snippet of context. That report is what a
+regex needs and what you can paste to whoever writes the rule.
+
+```sh
+# TEMPLAR, on the LAN or VPN. Token: an API token from the admin UI.
+# Ollama (optional): 0.9+, `ollama pull <model>`; omit OLLAMA_MODEL for heuristic labels.
+CF_TOKEN=… CF_SERVER=<virtual server uuid> OLLAMA_MODEL=qwen3.6:35b-a3b \
+  tools/pii-survey.py --query "from:bring" --limit 20
+tools/pii-survey.py --no-llm --fixture tools/fixtures/*.json     # offline demo
+```
+
+Read the report before sharing it: context snippets keep ordinary words so
+the anchor for a regex stays visible, and `nix flake check` verifies on the
+fixtures that masks appear and raw values don't. Standard library only.
+
 ## 2. DNS and the router
 
 - **Cloudflare:** nothing to add. `tun.gameforce.me` already points at the WAN

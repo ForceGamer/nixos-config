@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"nextCursor\":\"eyJhIjoiU3RsYlpCd3JaMVgtIn0\",\"results\":[{\"messageId\":[\"[HASH:9d99bd8feb96ed19]\"],\"id\":\"Stl_BAf1jTyN\",\"from\":[{\"name\":\"Yubico\",\"email\":\"[HASH:ed397ea27c5411bc]\"}],\"folder\":{\"id\":\"P-F\",\"name\":\"Inbox\"},\"preview\":\"Your order has shipped! Order Number: #ORD-EU313765 Placed November 5, 2026 Hello [NAME] [SURNAME], Your order is on the way! https://www.yubico.com/store/order/a1b2c3d4e5f6?utm_source=invoice&utm_medium=email&utm_content=ORD-EU313765 Total $62.00\",\"receivedAt\":\"2026-11-10T14:00:13Z\",\"to\":[{\"name\":\"[NAME] [SURNAME]\",\"email\":\"[HASH:8f5ee65d8be87ce6]\"}],\"threadId\":\"AjRx_FrVyR_B\",\"subject\":\"Yubico order #ORD-EU313765: shipment\"}]}"
+      }
+    ],
+    "isError": false
+  },
+  "id": 1
+}

@@ -1,0 +1,24 @@
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"subject\":\"Pakke snart på vei fra Butikken\",\"threadId\":\"A4P4utVdzz2R\",\"bodyText\":\"Hei,\\n\\n Vi har fått beskjed fra Butikken om at vi snart vil motta en pakke som\\n skal til deg.\\n\\n Se valgmuligheter og spor pakken her:\\n https://bring.no/s/AbC123xyz789.\\n\\n Sporingsnummer: 70712345678901234.\\n\\n Levering 12. november kl 14:30, 2 kolli, 1 299,00 kr.\\n\\n Hilsen Bring\",\"folder\":{\"name\":\"Inbox\",\"id\":\"P-F\"},\"id\":\"Stl_Nf4tACX3\",\"from\":[{\"name\":\"Bring\",\"email\":\"[HASH:6c5d55229d7130f3]\"}],\"to\":[{\"name\":null,\"email\":\"[HASH:3a55b427b9b3ec9d]\"}],\"receivedAt\":\"2026-11-10T10:11:19Z\",\"messageId\":[\"[HASH:f3bd37b45128c834].329493.1794305473765@notifications-engine-59494cf447-sjldj\"]}"
+      }
+    ],
+    "isError": false,
+    "structuredContent": {
+      "subject": "Pakke snart på vei fra Butikken",
+      "threadId": "A4P4utVdzz2R",
+      "bodyText": "Hei,\n\n Vi har fått beskjed fra Butikken om at vi snart vil motta en pakke som\n skal til deg.\n\n Se valgmuligheter og spor pakken her:\n https://bring.no/s/AbC123xyz789.\n\n Sporingsnummer: 70712345678901234.\n\n Levering 12. november kl 14:30, 2 kolli, 1 299,00 kr.\n\n Hilsen Bring",
+      "folder": { "name": "Inbox", "id": "P-F" },
+      "id": "Stl_Nf4tACX3",
+      "from": [{ "name": "Bring", "email": "[HASH:6c5d55229d7130f3]" }],
+      "to": [{ "name": null, "email": "[HASH:3a55b427b9b3ec9d]" }],
+      "receivedAt": "2026-11-10T10:11:19Z",
+      "messageId": ["[HASH:f3bd37b45128c834].329493.1794305473765@notifications-engine-59494cf447-sjldj"]
+    }
+  },
+  "id": 2
+}
