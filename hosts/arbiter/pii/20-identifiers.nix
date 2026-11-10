@@ -12,7 +12,7 @@
       # A label (EN/NO) followed by a 5–30 char alphanumeric token with at
       # least one digit. Keeps the label, so the model still sees that there
       # was an order number.
-      search = "\\b((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?\\s*[#:]?\\s*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9-]*\\d)[A-Z0-9][A-Z0-9-]{4,29}\\b";
+      search = "\\b((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?\\s*(?:[#:]\\s*)*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9-]*\\d)[A-Z0-9][A-Z0-9-]{4,29}\\b";
       replace = "\\1[ORDER]";
     }
     {
@@ -25,6 +25,11 @@
     {
       input = "Your order #123456789 has shipped";
       expect = "Your order #[ORDER] has shipped";
+    }
+    {
+      # Both a colon and a hash between label and number (Yubico's format).
+      input = "Order Number: #ORD-EU313765 Placed November 5";
+      expect = "Order Number: #[ORDER] Placed November 5";
     }
     {
       input = "Ordrenummer 4471023 er bekreftet";
