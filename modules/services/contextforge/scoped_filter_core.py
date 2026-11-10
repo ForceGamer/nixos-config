@@ -138,7 +138,9 @@ class ScopedFilter:
             except ValueError:
                 parsed = None
             if isinstance(parsed, (dict, list)):
-                return json.dumps(self._walk(parsed, sender, subject), ensure_ascii=False)
+                # Compact, like the JSON MCP servers emit, so the text block
+                # differs from the original only by the replacements.
+                return json.dumps(self._walk(parsed, sender, subject), ensure_ascii=False, separators=(",", ":"))
         if sender is None and subject is None:
             # Plain text: an email rendered with header lines, perhaps.
             m = _TEXT_FROM.search(text)
