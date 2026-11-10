@@ -1,3 +1,4 @@
+# Paddle (payment processor) receipts: transaction ids.
 {
   name = "paddle";
   when = {
@@ -6,14 +7,15 @@
   };
   rules = [
     {
-      search = "txn_[A-Za-z0-9]+";
-      replace = "\\1[TXN_ID]";
+      search = "\\btxn_[A-Za-z0-9]+";
+      replace = "[TXN_ID]";
     }
   ];
   examples = [
     {
       from = "help@paddle.com";
-      input = "txn_01kp9a4tv04jz4nkw4kp9a4";
-      expect = "[TXN_id]"; }
+      input = "Transaction txn_01kp9a4tv04jz4nkw4kp9a4 completed";
+      expect = "Transaction [TXN_ID] completed";
+    }
   ];
 }

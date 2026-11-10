@@ -30,11 +30,23 @@ _TEXT_SUBJECT = re.compile(r"^\W{0,3}subject:\s*(.+?)\s*$", re.IGNORECASE | re.M
 _FLAG_GROUP = re.compile(r"\(\?[a-zA-Z]+\)")
 
 
-def _compile(search):
+class RuleError(ValueError):
+    """A rule that can't be loaded. Names the group and rule, since Python's
+    own message doesn't say where the regex came from."""
+
+
+def _compile(search, where):
     """Every rule is case-insensitive unless it opens with its own flags."""
+    if "(:?" in search:
+        # A capturing group starting with an optional colon: never what the
+        # author meant, and it silently renumbers \1.
+        raise RuleError(f"{where}: '(:?' in {search!r}; a non-capturing group is '(?:'")
     if not _FLAG_GROUP.match(search):
         search = "(?i)" + search
-    return re.compile(search)
+    try:
+        return re.compile(search)
+    except re.error as e:
+        raise RuleError(f"{where}: {search!r}: {e}") from e
 
 
 class Group:
@@ -42,12 +54,18 @@ class Group:
         self.name = spec.get("name", "?")
         when = spec.get("when")
         self.scoped = when is not None
-        self.when_from = _compile(when["from"]) if when and when.get("from") else None
-        self.when_subject = _compile(when["subject"]) if when and when.get("subject") else None
-        self.rules = [(_compile(r["search"]), r["replace"]) for r in spec["rules"]]
-        for pattern, replace in self.rules:
-            # Fail at load time on a bad backreference, not on the first email.
-            pattern.sub(replace, "probe")
+        where = f"group {self.name!r}"
+        self.when_from = _compile(when["from"], where + " when.from") if when and when.get("from") else None
+        self.when_subject = _compile(when["subject"], where + " when.subject") if when and when.get("subject") else None
+        self.rules = []
+        for i, r in enumerate(spec["rules"]):
+            pattern = _compile(r["search"], f"{where} rule {i + 1}")
+            try:
+                # Fail at load time on a bad backreference, not on the first email.
+                pattern.sub(r["replace"], "probe")
+            except re.error as e:
+                raise RuleError(f"{where} rule {i + 1}: replace {r['replace']!r} for {r['search']!r}: {e}") from e
+            self.rules.append((pattern, r["replace"]))
 
     def matches(self, sender, subject):
         """Only a *known* sender/subject that fails its regex excludes the

@@ -1,24 +1,32 @@
+# Yubico store: order numbers (ORD-EU…/INV-EU…) and the order page link,
+# e.g. https://www.yubico.com/store/order/{HEX}?utm_source=invoice&…&utm_content=ORD-EU{NUMERIC}
 {
-  name = "paddle";
+  name = "yubico";
   when = {
     from = "\\byubico\\b";
     subject = null;
   };
   rules = [
     {
-      search = "(:?ORD|INV)(:?_|-)EU[0-9]+";
-      replace = "\\1[ORDER_ID]";
+      search = "\\b(?:ORD|INV)[-_]EU[0-9]+\\b";
+      replace = "[ORDER_ID]";
     }
     {
-      search = "order\\/[A-Za-z0-9]+";
+      search = "(order/)[A-Za-z0-9]+";
       replace = "\\1[ORDER]";
     }
   ];
   examples = [
     {
-      from = "noreply@yubico.com";
-      input = "#ORD-EU313765";
-      expect = "[ORDER_ID]"; }
+      # With a label, the global identifiers group gets there first.
+      from = "Yubico noreply@yubico.com";
+      input = "Order Number: #ORD-EU313765 (ORD-EU313765 shipped)";
+      expect = "Order Number: #[ORDER] ([ORDER_ID] shipped)";
+    }
+    {
+      from = "Yubico noreply@yubico.com";
+      input = "https://www.yubico.com/store/order/a1b2c3d4?utm_source=invoice&utm_content=ORD-EU313765";
+      expect = "https://www.yubico.com/store/order/[ORDER]?utm_source=invoice&utm_content=[ORDER_ID]";
+    }
   ];
 }
-# https://www.yubico.com/store/order/{HEX}?utm_source=invoice&utm_medium=email&utm_campaign=Check-order&utm_content=ORD-EU{NUMERIC}

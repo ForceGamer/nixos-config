@@ -90,6 +90,14 @@ class ScopingTests(unittest.TestCase):
         with self.assertRaises(Exception):
             ScopedFilter({"groups": [{"name": "x", "when": None, "rules": [{"search": "a", "replace": r"\2"}]}]})
 
+    def test_colon_group_typo_rejected(self):
+        with self.assertRaisesRegex(Exception, r"\(\?:"):
+            ScopedFilter({"groups": [{"name": "x", "when": None, "rules": [{"search": "(:?a|b)", "replace": "_"}]}]})
+
+    def test_load_error_names_the_rule(self):
+        with self.assertRaisesRegex(Exception, r"group 'x' rule 2"):
+            ScopedFilter({"groups": [{"name": "x", "when": None, "rules": [{"search": "a", "replace": "_"}, {"search": "b", "replace": r"\1"}]}]})
+
     def test_own_flags_respected(self):
         f = ScopedFilter({"groups": [{"name": "x", "when": None, "rules": [{"search": "(?-i:ABC)", "replace": "_"}]}]})
         self.assertEqual(f.filter_text("abc ABC"), "abc _")
