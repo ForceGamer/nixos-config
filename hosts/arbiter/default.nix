@@ -32,91 +32,11 @@
   # free port works; Caddy and the firewall follow.
   homelab.contextforge.publicPort = 47231;
 
-  # Names the generic PII patterns can't know, replaced in every tool result
-  # before it reaches an AI client. `secret` names a sops key under
-  # contextforge/ whose value is matched case-insensitively as whole words;
-  # add one with ./add-pii.sh. `search` takes a raw Python regex instead, for
-  # patterns that aren't secret.
-  # Rules run in this order, each on the output of the previous one, so a
-  # name that contains another must come first: full names before surname,
-  # the long employer name before its short form, the address before the
-  # town. Otherwise the shorter rule fires first and the longer never matches.
-  # `nix flake check` compiles every regex; the plugin would silently skip a
-  # broken one.
-  homelab.contextforge.pseudonyms = [
-    { # Keep above others
-      secret = "home-full";
-      replace = "[HOME]";
-    }
-    {
-      secret = "decree-yonder";
-      replace = "[NAME]";
-    }
-    {
-      secret = "ivy-pork";
-      replace = "[NAME]";
-    }
-    {
-      secret = "middlename";
-      replace = "[MIDDLE_NAME]";
-    }
-    {
-      secret = "surname";
-      replace = "[SURNAME]";
-    }
-    {
-      secret = "employer";
-      replace = "[EMPLOYER]";
-    }
-    {
-      secret = "employer-short";
-      replace = "[EMPLOYER_SHORT]";
-    }
-    {
-      secret = "home";
-      replace = "[HOME]";
-    }
-    {
-      secret = "home-town";
-      replace = "[HOME]";
-    }
-    {
-      secret = "school-name";
-      replace = "[SCHOOL]";
-    }
-    {
-      secret = "post-code";
-      replace = "[POST_CODE]";
-    }
-    {
-      # Order/tracking/invoice/booking numbers: a label (EN/NO) followed by a
-      # 5–30 char alphanumeric token with at least one digit. Keeps the label.
-      search = "\\b((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?\\s*[#:]?\\s*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9-]*\\d)[A-Z0-9][A-Z0-9-]{4,29}\\b";
-      replace = "\\1[ORDER]";
-    }
-    {
-      # Numeric cells in HTML mail, e.g. order ids in a table.
-      search = ">[0-9]+</div>";
-      replace = ">[ORDER_ID]</div>";
-    }
-    {
-      # Crypto amounts: the number before a ticker, keeping the ticker.
-      search = "\\b[0-9]*\\.?[0-9]+(?=\\s+(?:USDG|LTC|BTC)\\b)";
-      replace = "[CRYPTO_AMOUNT]";
-    }
-    {
-      # Money: a currency sign before the number, or kr/NOK/€ after it. `$`
-      # must be escaped; bare it is the end-of-line anchor.
-      search = "(?:€|\\$|£)\\s?[0-9][0-9 .,]*[0-9]|(?:€|\\$|£)[0-9]|\\b[0-9][0-9 .,]*[0-9]\\s?(?:€|kr|NOK)\\b|\\b[0-9]\\s?(?:€|kr|NOK)\\b";
-      replace = "[AMOUNT]";
-    }
-
-    #{
-    #  # ISO 8601 timestamps, e.g. 2026-11-09T00:00:00Z
-    #  search = "\\b\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):?[0-5]\\d)\\b";
-    #  replace = "[TIMESTAMP]";
-    #}
-  ];
+  # Names and patterns the generic PII filter can't know, replaced in every
+  # tool result before it reaches an AI client. One file per rule group in
+  # pii/, applied in filename order; a group can be scoped to a sender or
+  # subject (see CONTEXTFORGE.md). Add a name with ./add-pii.sh.
+  homelab.contextforge.rulesDir = ./pii;
 
   homelab.admin = {
     name = "admin";

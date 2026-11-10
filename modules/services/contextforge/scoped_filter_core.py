@@ -1,0 +1,148 @@
+# Rule engine for the scoped PII filter. No gateway imports, so it can be
+# unit-tested in `nix flake check`; scoped_filter.py wraps it as a plugin.
+#
+# Config shape (rendered by contextforge.nix from hosts/<host>/pii/*.nix):
+#   groups: [ { name, when: null | { from: regex|null, subject: regex|null },
+#               rules: [ { search, replace } ] } ]
+#   from_keys / subject_keys: dict keys that identify an email's sender and
+#   subject when a tool returns structured data.
+#
+# Semantics, in order of importance:
+#   1. A group with `when: null` is global and always applies.
+#   2. A scoped group applies to an email whose sender and subject both match
+#      its regexes (a missing `from` or `subject` in `when` matches anything).
+#   3. Where no email can be recognised, EVERY group applies. Scoping may add
+#      rules to a known context; it never removes protection from an unknown
+#      one.
+# Rules within a group, and groups themselves, run in order, each on the
+# output of the previous one.
+import json
+import re
+
+DEFAULT_FROM_KEYS = ("from", "sender", "From", "Sender")
+DEFAULT_SUBJECT_KEYS = ("subject", "Subject")
+
+# Plain-text results: "From: ..." / "Subject: ..." lines (RFC 822 style, or a
+# markdown rendering of them).
+_TEXT_FROM = re.compile(r"^\W{0,3}from:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_TEXT_SUBJECT = re.compile(r"^\W{0,3}subject:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+
+_FLAG_GROUP = re.compile(r"\(\?[a-zA-Z]+\)")
+
+
+def _compile(search):
+    """Every rule is case-insensitive unless it opens with its own flags."""
+    if not _FLAG_GROUP.match(search):
+        search = "(?i)" + search
+    return re.compile(search)
+
+
+class Group:
+    def __init__(self, spec):
+        self.name = spec.get("name", "?")
+        when = spec.get("when")
+        self.scoped = when is not None
+        self.when_from = _compile(when["from"]) if when and when.get("from") else None
+        self.when_subject = _compile(when["subject"]) if when and when.get("subject") else None
+        self.rules = [(_compile(r["search"]), r["replace"]) for r in spec["rules"]]
+        for pattern, replace in self.rules:
+            # Fail at load time on a bad backreference, not on the first email.
+            pattern.sub(replace, "probe")
+
+    def matches(self, sender, subject):
+        """Only a *known* sender/subject that fails its regex excludes the
+        group; an unknown one (None) never does. That is what makes an
+        unrecognised result get every rule."""
+        if not self.scoped:
+            return True
+        if self.when_from is not None and sender is not None and not self.when_from.search(sender):
+            return False
+        if self.when_subject is not None and subject is not None and not self.when_subject.search(subject):
+            return False
+        return True
+
+    def apply(self, text):
+        for pattern, replace in self.rules:
+            text = pattern.sub(replace, text)
+        return text
+
+
+def _as_text(value):
+    """Sender/subject fields may be strings, {name,email} objects or lists of
+    either; flatten to the strings they contain, space-separated, so a
+    `when.from` regex sees `Shop <x@shop.example>`-like text."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_as_text(v) for v in value.values())
+    if isinstance(value, list):
+        return " ".join(_as_text(v) for v in value)
+    return str(value)
+
+
+class ScopedFilter:
+    def __init__(self, config):
+        self.groups = [Group(g) for g in config.get("groups", [])]
+        self.from_keys = tuple(config.get("from_keys", DEFAULT_FROM_KEYS))
+        self.subject_keys = tuple(config.get("subject_keys", DEFAULT_SUBJECT_KEYS))
+
+    # -- public entry points ------------------------------------------------
+
+    def filter_text(self, text, sender=None, subject=None):
+        """Apply the groups that match this context (all of them if none)."""
+        for group in self.groups:
+            if group.matches(sender, subject):
+                text = group.apply(text)
+        return text
+
+    def filter_result(self, result):
+        """Scrub a tool result of any shape; returns the same shape."""
+        if isinstance(result, str):
+            return self._filter_string(result)
+        if isinstance(result, (dict, list)):
+            return self._walk(result, sender=None, subject=None)
+        return result
+
+    # -- internals ----------------------------------------------------------
+
+    def _first(self, mapping, keys):
+        for key in keys:
+            if key in mapping:
+                return _as_text(mapping[key])
+        return None
+
+    def _walk(self, node, sender, subject):
+        if isinstance(node, dict):
+            # A dict carrying a sender or subject is an email: everything
+            # inside it is scoped to that email, including nested parts.
+            own_sender = self._first(node, self.from_keys)
+            own_subject = self._first(node, self.subject_keys)
+            if own_sender is not None or own_subject is not None:
+                sender, subject = own_sender, own_subject
+            return {k: self._walk(v, sender, subject) for k, v in node.items()}
+        if isinstance(node, list):
+            return [self._walk(v, sender, subject) for v in node]
+        if isinstance(node, str):
+            return self._filter_string(node, sender, subject)
+        return node
+
+    def _filter_string(self, text, sender=None, subject=None):
+        # Many MCP servers return JSON as a text block. Scrub it structurally
+        # so per-email scoping still works, and write it back the same way.
+        stripped = text.lstrip()
+        if stripped[:1] in "{[":
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(self._walk(parsed, sender, subject), ensure_ascii=False)
+        if sender is None and subject is None:
+            # Plain text: an email rendered with header lines, perhaps.
+            m = _TEXT_FROM.search(text)
+            sender = m.group(1) if m else None
+            m = _TEXT_SUBJECT.search(text)
+            subject = m.group(1) if m else None
+        return self.filter_text(text, sender, subject)

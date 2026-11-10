@@ -63,8 +63,9 @@ cat <<EOF
 
 Stored contextforge/$key (regex: $value).
 
-Next, unless the key is already referenced, add to homelab.contextforge.pseudonyms
-in hosts/arbiter/default.nix:
+Next, unless the key is already referenced, add to the rules of the right
+group in hosts/arbiter/pii/ (10-people.nix for a person or place; longer
+values before shorter ones they contain):
 
     {
       secret = "$key";

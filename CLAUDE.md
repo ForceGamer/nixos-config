@@ -61,14 +61,15 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 ├── CADDY.md                           # operator steps to finish the Caddy/ntfy rollout
 ├── CONTEXTFORGE.md                    # what the MCP gateway scrubs (and doesn't); operator steps
 ├── deploy.sh                          # nixos-rebuild switch against ARBITER
-├── add-pii.sh                         # put a name into sops for the gateway's pseudonym list
+├── add-pii.sh                         # put a name into sops for the gateway's rule files
 ├── .sops.yaml                         # who can decrypt secrets (age recipients)
 ├── hosts/
 │   └── arbiter/
 │       ├── default.nix                # host-specific config, imports modules
 │       ├── hardware-configuration.nix # generated; filesystems come from disko
 │       ├── disko.nix                  # declarative disk layout
-│       └── secrets.yaml               # sops-encrypted secrets
+│       ├── secrets.yaml               # sops-encrypted secrets
+│       └── pii/                       # ContextForge rule groups, one file each, filename order; with examples
 └── modules/
     ├── base.nix         # locale, time, journald, minimal packages
     ├── nix.nix          # nix settings, gc, store optimisation
@@ -85,7 +86,8 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
     └── services/
         ├── caddy.nix     # Caddy reverse proxy, wildcard cert via ACME DNS-01; homelab.domain
         ├── ntfy.nix      # ntfy server on localhost behind Caddy; all ntfy users and ACLs
-        └── contextforge.nix # MCP gateway (rootless podman) with PII plugins; public vhost + decoy catch-all + jail
+        ├── contextforge.nix # MCP gateway (rootless podman) with PII plugins; public vhost + decoy catch-all + jail
+        └── contextforge/    # our ScopedFilter plugin (core, framework wrapper, unit tests)
 ```
 
 ## Phase 1 scope: ARBITER essentials
@@ -194,7 +196,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
   - Testing: the Nix build sandbox here has no `/dev/kvm`, so NixOS VM tests run under TCG and a nested microVM is far too slow to boot. Test host-side rules with a network namespace on a veth named `vm-claude`, and the guest by building `microvm.vms.claude.config.config.microvm.declaredRunner` with user-mode networking and running it directly as the user (who has KVM).
   - Never give the QEMU guest exactly 2048 MB of memory; it hangs at boot (microvm.nix issue 171).
 - **ContextForge:** `modules/services/contextforge.nix`, IBM's MCP gateway as the PII-scrubbing hop between MCP servers with personal data and AI clients. `ghcr.io/ibm/mcp-context-forge` v1.1.0 pinned by digest (no nixpkgs package), rootless podman under `contextforge` (uid 380, linger, `--userns=keep-id`), read-only rootfs, no capabilities, SQLite in `/var/lib/contextforge/data`, `127.0.0.1:4444`. Rootless rather than root podman for least privilege; the static uid is what the oci-containers module needs for `/run/user/<uid>`.
-  - Scrubbing is in ContextForge's plugin framework on `tool_post_invoke` and `prompt_post_fetch` only: `regex_filter` (fixed pseudonyms, `homelab.contextforge.pseudonyms`; an entry's `secret` names a sops key whose value is matched literally, case-insensitive, whole-word, and the module declares the secret; `./add-pii.sh` stores the value regex-escaped; rules run in list order so longer values go first; every rule gets `(?i)` unless it opens with its own flag group; `checks.x86_64-linux.contextforge-pseudonyms` compiles them all with Python because the plugin silently skips a regex that doesn't compile) then `cpex_pii_filter` with `hash` masking (consistent per value within one process; `GUNICORN_WORKERS=1`). `fail_on_plugin_error = true`: a plugin failure fails the call. Regex-based, no NER; resources and tool arguments aren't filtered, so virtual servers get tools only. Presidio would mean the external LLMGuard plugin container (downloads models at start), rejected under priority 1.
+  - Scrubbing is in ContextForge's plugin framework on `tool_post_invoke` and `prompt_post_fetch` only: our own `ScopedFilter` plugin (`modules/services/contextforge/`, mounted into the image at `plugins/custom`; rule groups from `hosts/arbiter/pii/*.nix` via `homelab.contextforge.rulesDir`, filename order; a group is global or scoped by sender/subject regexes, and where no email is recognisable every group applies, so scoping only ever adds rules; a rule's `secret` names a sops key whose value is matched literally, case-insensitive, whole-word, and the module declares the secret; `./add-pii.sh` stores the value regex-escaped; longer values go first; every rule gets `(?i)` unless it opens with its own flag group; `checks.x86_64-linux.contextforge-filter` runs the plugin's unit tests and each file's `examples` against the rendered rules, with secrets replaced by `SECRET_<KEY>` stand-ins. Written instead of the stock `regex_filter` because that has no scoping and silently drops a regex that doesn't compile; ours refuses to start) then `cpex_pii_filter` with `hash` masking (consistent per value within one process; `GUNICORN_WORKERS=1`). `fail_on_plugin_error = true`: a plugin failure fails the call. Regex-based, no NER; resources and tool arguments aren't filtered, so virtual servers get tools only. Presidio would mean the external LLMGuard plugin container (downloads models at start), rejected under priority 1.
   - The plugin YAML is a `sops.templates` file (it carries sops placeholders), mounted read-only into the container; secrets reach it through a second template as podman's `--env-file`. Both owned by `contextforge`, mode 0400.
   - Three Caddy sites: `mcp-admin.<domain>` on 443 (LAN/WireGuard, full gateway and admin UI); `tun.<domain>:<publicPort>` (internet: `/servers/*` only, and only when an `Authorization: Bearer` header is present, 2 MB bodies, `Server` header stripped; anything else is `abort`ed, i.e. the connection is closed with no response); and a catch-all `:<publicPort>` that serves the decoy certificate and aborts. The hostname is the WireGuard one (`tun`), already public on the WAN IP, so no DNS record hints at a web service. On the host it is `homelab.contextforge.publicPort` (47231): a separate port rather than relaxing 443 keeps the private-source rule on ARBITER's 443 intact. Externally it is 443: **claude.ai custom connectors cannot reach a non-standard port** (tested 2026-11-09: "Couldn't connect", no packet arrived; same URL on 443 worked), so the router maps WAN 443 → 47231 and the "out of mass scans" benefit is gone; the decoy, the silent drops and fail2ban remain. Caddy checks only that a bearer header exists (stock Caddy can't validate JWTs); the gateway validates it. Clients use expiring JWT bearer tokens from the admin UI; claude.ai connectors send them as a request header.
   - Outside this repo: five `contextforge/*` sops secrets (the gateway validates `DEFAULT_USER_PASSWORD` at start even with registration off, so it is a secret too), the UniFi forward TCP 443 → ARBITER 47231, and the upstream servers/virtual servers/tokens configured in the UI (stored in its SQLite). See `CONTEXTFORGE.md`.

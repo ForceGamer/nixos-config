@@ -45,39 +45,164 @@ let
     "prompt_post_fetch"
   ];
 
-  # Every rule is case-insensitive, like the PII filter's own patterns, unless
-  # it opens with its own inline flag group such as (?im). A plain (?:...)
-  # group is not one.
-  hasFlags = s: builtins.match "\\(\\?[a-zA-Z]+\\).*" s != null;
-  words = map (p: {
-    search = (if hasFlags p.search then "" else "(?i)") + p.search;
-    inherit (p) replace;
-  }) cfg.pseudonyms;
+  # Operator rules: groups of search-and-replace rules, each group global or
+  # scoped to an email's sender/subject. Applied by the scoped_filter plugin
+  # (modules/services/contextforge/), which is ours, not upstream's: the stock
+  # regex_filter plugin has no scoping and silently drops a rule whose regex
+  # doesn't compile. Ours fails at start, and the check below fails earlier.
+  ruleType = lib.types.submodule (
+    { config, ... }:
+    {
+      options = {
+        secret = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "school-name";
+          description = ''
+            sops key under `contextforge/` whose value is the text to match,
+            case-insensitively and as whole words. Add one with
+            `./add-pii.sh`, which also escapes regex metacharacters. The
+            secret is declared for you.
+          '';
+        };
+        search = lib.mkOption {
+          type = lib.types.str;
+          description = ''
+            Python regex matched in tool results and rendered prompts.
+            Derived from `secret` when that is set; give it directly for
+            patterns that aren't secret. Case-insensitive unless it opens
+            with its own `(?...)` flags.
+          '';
+        };
+        replace = lib.mkOption {
+          type = lib.types.str;
+          description = "Replacement text, e.g. a fixed label like [SCHOOL]; `\\1` keeps a group.";
+        };
+      };
+      config.search = lib.mkIf (config.secret != null) (
+        lib.mkDefault "\\b${placeholder config.secret}\\b"
+      );
+    }
+  );
+  optionalRegex = lib.mkOption {
+    type = lib.types.nullOr lib.types.str;
+    default = null;
+  };
+  groupType = lib.types.submodule {
+    options = {
+      name = lib.mkOption {
+        type = lib.types.str;
+        description = "Label used in test output.";
+      };
+      when = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.submodule {
+            options = {
+              from = optionalRegex // {
+                description = "Regex the email's sender must match (any, if null).";
+              };
+              subject = optionalRegex // {
+                description = "Regex the email's subject must match (any, if null).";
+              };
+            };
+          }
+        );
+        default = null;
+        description = ''
+          null: global, always applied. Otherwise the group applies only to
+          emails whose sender and subject match. Where the plugin can't tell
+          what it is looking at, every group applies: scoping adds rules to
+          a known context, it never removes protection from an unknown one.
+        '';
+      };
+      rules = lib.mkOption {
+        type = lib.types.listOf ruleType;
+        default = [ ];
+        description = "Applied in order, each on the previous one's output.";
+      };
+      examples = lib.mkOption {
+        type = lib.types.listOf (
+          lib.types.submodule {
+            options = {
+              input = lib.mkOption { type = lib.types.str; };
+              expect = lib.mkOption { type = lib.types.str; };
+              from = optionalRegex // {
+                description = "Sender to pretend the input came from.";
+              };
+              subject = optionalRegex // {
+                description = "Subject to pretend the input had.";
+              };
+            };
+          }
+        );
+        default = [ ];
+        description = ''
+          Synthetic inputs and the expected output after the whole rule set,
+          run by `nix flake check`. Write a secret's key where its value
+          would be; never real data.
+        '';
+      };
+    };
+  };
 
-  # The plugin drops a rule whose regex doesn't compile, silently
-  # (`except re.error: pass`), so a typo would leak the very thing the rule
-  # exists to hide. Compile them all here with the same engine; wired into
-  # `nix flake check` from flake.nix. Secret values appear as sops
-  # placeholders, which contain no regex metacharacters.
-  pseudonymsCheck =
-    pkgs.runCommand "contextforge-pseudonyms-check"
+  # What the plugin receives. Secret-backed rules carry sops placeholders,
+  # substituted when the template is rendered on the host.
+  filterConfig = {
+    groups = map (g: {
+      inherit (g) name;
+      when = if g.when == null then null else { inherit (g.when) from subject; };
+      rules = map (r: { inherit (r) search replace; }) g.rules;
+    }) cfg.ruleGroups;
+  };
+  secretsUsed = lib.unique (
+    lib.concatMap (g: map (r: r.secret) (lib.filter (r: r.secret != null) g.rules)) cfg.ruleGroups
+  );
+
+  # The plugin, mounted into the image's plugins/ package.
+  pluginDir = pkgs.runCommand "contextforge-scoped-filter" { } ''
+    mkdir -p "$out"
+    cp ${./contextforge/scoped_filter.py} "$out/scoped_filter.py"
+    cp ${./contextforge/scoped_filter_core.py} "$out/scoped_filter_core.py"
+    : > "$out/__init__.py"
+  '';
+
+  # Unit tests of the engine, then the host's examples against the rendered
+  # config with every placeholder replaced by a stand-in for its secret:
+  # SECRET_ plus the key in UPPER_SNAKE (`home-full` → SECRET_HOME_FULL).
+  # Underscores keep one stand-in from matching inside another, which
+  # hyphens would not, and the prefix keeps it from matching inside a label
+  # like [HOME]. Wired into `nix flake check` from flake.nix.
+  standIn = s: "SECRET_" + lib.toUpper (lib.replaceStrings [ "-" ] [ "_" ] s);
+  check =
+    pkgs.runCommand "contextforge-filter-check"
       {
         nativeBuildInputs = [ pkgs.python3 ];
-        words = builtins.toJSON words;
-        passAsFile = [ "words" ];
+        config = builtins.replaceStrings (map placeholder secretsUsed) (map standIn secretsUsed) (
+          builtins.toJSON filterConfig
+        );
+        examples = builtins.toJSON (
+          lib.concatMap (
+            g:
+            map (e: {
+              inherit (e)
+                input
+                expect
+                from
+                subject
+                ;
+              group = g.name;
+            }) g.examples
+          ) cfg.ruleGroups
+        );
+        passAsFile = [
+          "config"
+          "examples"
+        ];
       }
       ''
-        python3 -I - "$wordsPath" <<'EOF'
-        import json, re, sys
-        bad = 0
-        for w in json.load(open(sys.argv[1])):
-            try:
-                re.sub(w["search"], w["replace"], "probe")
-            except re.error as e:
-                bad += 1
-                print(f"invalid pseudonym rule {w['search']!r} -> {w['replace']!r}: {e}", file=sys.stderr)
-        sys.exit(1 if bad else 0)
-        EOF
+        cp ${./contextforge/scoped_filter_core.py} scoped_filter_core.py
+        cp ${./contextforge/test_scoped_filter.py} test_scoped_filter.py
+        CONFIG="$configPath" EXAMPLES="$examplesPath" python3 -m unittest -v test_scoped_filter
         touch "$out"
       '';
   plugins = {
@@ -89,13 +214,13 @@ let
     };
     plugins = [
       {
-        # Fixed names first, so their labels are never re-masked below.
-        name = "Pseudonyms";
-        kind = "plugins.regex_filter.search_replace.SearchReplacePlugin";
+        # Operator rules first, so their labels are never re-masked below.
+        name = "ScopedFilter";
+        kind = "plugins.custom.scoped_filter.ScopedFilterPlugin";
         hooks = postHooks;
         mode = "enforce";
         priority = 40;
-        config.words = words;
+        config = filterConfig;
       }
       {
         name = "PIIFilter";
@@ -148,11 +273,29 @@ let
 in
 {
   options.homelab.contextforge = {
-    pseudonymsCheck = lib.mkOption {
+    check = lib.mkOption {
       type = lib.types.package;
-      default = pseudonymsCheck;
+      default = check;
       readOnly = true;
-      description = "Derivation that fails if any pseudonym regex doesn't compile; a flake check.";
+      description = "Tests of the rule engine and of this host's rule examples; a flake check.";
+    };
+    rulesDir = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = lib.literalExpression "./pii";
+      description = ''
+        Directory of `*.nix` files, each one rule group, loaded into
+        `ruleGroups` in filename order (so prefix them with numbers).
+      '';
+    };
+    ruleGroups = lib.mkOption {
+      type = lib.types.listOf groupType;
+      default = [ ];
+      description = ''
+        Search-and-replace rule groups applied to tool results and rendered
+        prompts before the generic PII filter, for names and patterns it
+        can't know. Keep the names themselves out of the repo: use `secret`.
+      '';
     };
     publicPort = lib.mkOption {
       type = lib.types.port;
@@ -170,52 +313,17 @@ in
       default = "ghcr.io/ibm/mcp-context-forge@sha256:7eb21fb9a8070df59435c03c76c40d8c71230c55ba89f884f2482d2cc81cff1c";
       description = "ContextForge image, pinned by digest.";
     };
-    pseudonyms = lib.mkOption {
-      type = lib.types.listOf (
-        lib.types.submodule (
-          { config, ... }:
-          {
-            options = {
-              secret = lib.mkOption {
-                type = lib.types.nullOr lib.types.str;
-                default = null;
-                example = "school-name";
-                description = ''
-                  sops key under `contextforge/` whose value is the text to
-                  match, case-insensitively and as whole words. Add one with
-                  `./add-pii.sh`, which also escapes regex metacharacters.
-                  The secret is declared for you.
-                '';
-              };
-              search = lib.mkOption {
-                type = lib.types.str;
-                description = ''
-                  Python regex matched in tool results and rendered prompts.
-                  Derived from `secret` when that is set; give it directly for
-                  patterns that aren't secret.
-                '';
-              };
-              replace = lib.mkOption {
-                type = lib.types.str;
-                description = "Replacement text, e.g. a fixed label like [SCHOOL].";
-              };
-            };
-            config.search = lib.mkIf (config.secret != null) (
-              lib.mkDefault "\\b${placeholder config.secret}\\b"
-            );
-          }
-        )
-      );
-      default = [ ];
-      description = ''
-        Search-and-replace rules applied to tool results before the generic
-        PII filter. For names and places the regex patterns can't know.
-        Keep the names themselves out of the repo: use `secret`.
-      '';
-    };
   };
 
   config = {
+    homelab.contextforge.ruleGroups = lib.mkIf (cfg.rulesDir != null) (
+      map (f: import (cfg.rulesDir + "/${f}")) (
+        lib.sort lib.lessThan (
+          lib.filter (lib.hasSuffix ".nix") (builtins.attrNames (builtins.readDir cfg.rulesDir))
+        )
+      )
+    );
+
     virtualisation.podman = {
       enable = true;
       autoPrune.enable = true;
@@ -241,7 +349,7 @@ in
     ];
 
     # Root-only; they reach the container through the templates below. The
-    # pseudonym secrets are whatever the host's entries name.
+    # rule secrets are whatever the host's rule files name.
     sops.secrets = lib.genAttrs (
       [
         "contextforge/jwt-secret-key"
@@ -249,7 +357,7 @@ in
         "contextforge/admin-password"
         "contextforge/default-user-password"
       ]
-      ++ map (p: "contextforge/${p.secret}") (lib.filter (p: p.secret != null) cfg.pseudonyms)
+      ++ map (s: "contextforge/${s}") secretsUsed
     ) (_: { });
 
     # Secrets reach the container as an env file podman reads as this user.
@@ -283,6 +391,9 @@ in
       volumes = [
         "${home}/data:/data"
         "${config.sops.templates."contextforge-plugins.yaml".path}:/etc/mcpgateway/plugins.yaml:ro"
+        # Our plugin, importable as plugins.custom.scoped_filter next to the
+        # image's own plugins/ package.
+        "${pluginDir}:/app/plugins/custom:ro"
       ];
       environmentFiles = [ config.sops.templates."contextforge.env".path ];
       environment = {
