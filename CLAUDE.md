@@ -62,6 +62,9 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 ├── CONTEXTFORGE.md                    # what the MCP gateway scrubs (and doesn't); operator steps
 ├── deploy.sh                          # nixos-rebuild switch against ARBITER
 ├── add-pii.sh                         # put a name into sops for the gateway's rule files
+├── tools/
+│   ├── pii-survey.py                  # report of identifiers the rules miss, as shape masks; Ollama optional
+│   └── fixtures/                      # redacted Fastmail tool results the survey check runs on
 ├── .sops.yaml                         # who can decrypt secrets (age recipients)
 ├── hosts/
 │   └── arbiter/

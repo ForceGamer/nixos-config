@@ -44,6 +44,22 @@
       checks.x86_64-linux.contextforge-filter =
         self.nixosConfigurations.arbiter.config.homelab.contextforge.check;
 
+      # The survey tool must never print a raw identifier: run it on the
+      # fixtures and check that masks appear and the raw values don't.
+      checks.x86_64-linux.pii-survey =
+        nixpkgs.legacyPackages.x86_64-linux.runCommand "pii-survey-check"
+          { nativeBuildInputs = [ nixpkgs.legacyPackages.x86_64-linux.python3 ]; }
+          ''
+            python3 ${./tools/pii-survey.py} --no-llm --fixture ${./tools/fixtures}/*.json > report
+            for want in AAA-AA999999 a9a9a9a9a9a9 AaA999aaa999 99999999999999999 'name "Yubico"'; do
+              grep -qF -- "$want" report || { echo "missing $want"; cat report; exit 1; }
+            done
+            for raw in ORD-EU313765 a1b2c3d4e5f6 AbC123xyz789 70712345678901234 Stl_ AjRx; do
+              ! grep -qF -- "$raw" report || { echo "raw value leaked: $raw"; cat report; exit 1; }
+            done
+            cp report "$out"
+          '';
+
       # nixfmt's own wrapper for `nix fmt`; bare nixfmt no longer accepts
       # directories. Anchor the tree root on flake.nix so formatting never
       # wanders outside the repo when it isn't a git checkout.
