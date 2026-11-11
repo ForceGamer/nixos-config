@@ -46,7 +46,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
   - No real names, emails, or addresses.
   - Use placeholders (`<ADMIN_USER>`, `<ADMIN_SSH_PUBKEY>`) wherever the user hasn't supplied a value.
   - Don't read files outside this repo unless asked.
-- **No actions against the real machine without explicit approval each time.** This covers deploy, partitioning, disko, `nixos-install`, and SSH to ARBITER. Local evaluation and builds are always fine.
+- **No actions against the real machine without explicit approval each time.** This covers deploy, partitioning, disko, `nixos-install`, and SSH to ARBITER. Local evaluation and builds are always fine. One exception, the user's decision of 2026-11-11: Claude Code on TEMPLAR may run `./test.sh` without asking (see "Claude Code on TEMPLAR" below). `deploy.sh` and everything else still need approval each time.
 - **Never change `system.stateVersion`** once it's set at install.
 - **Before calling a change done:** format with `nix fmt`, make sure `nix flake check` passes, and build the toplevel locally (`nix flake check` doesn't build far enough to catch everything, e.g. missing sops files).
 - **Comments explain why, not what.** Keep modules small and single-purpose.
@@ -61,6 +61,8 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 ├── CADDY.md                           # operator steps to finish the Caddy/ntfy rollout
 ├── CONTEXTFORGE.md                    # what the MCP gateway scrubs (and doesn't); operator steps
 ├── deploy.sh                          # nixos-rebuild switch against ARBITER
+├── test.sh                            # nixos-rebuild test against ARBITER (a reboot undoes it)
+├── .gitmodules                        # empty on purpose: the Claude Code sandbox needs a real file here
 ├── add-pii.sh                         # put a name into sops for the gateway's rule files
 ├── tools/
 │   ├── pii-survey.py                  # report of identifiers the rules miss, as shape masks; Ollama optional
@@ -211,6 +213,12 @@ nix flake update nixpkgs   # bump nixpkgs pin
   - Outside this repo: five `contextforge/*` sops secrets (the gateway validates `DEFAULT_USER_PASSWORD` at start even with registration off, so it is a secret too), the UniFi forward TCP 443 → ARBITER 47231, and the upstream servers/virtual servers/tokens configured in the UI (stored in its SQLite). See `CONTEXTFORGE.md`.
 - **fail2ban:** `modules/fail2ban.nix` for policy (private ranges never banned, 5 tries / 10 min, 1 h doubling to a week, `nftables-allports`), jails live with their service. Jail `contextforge` reads Caddy's JSON access log for the public port (status 0 = aborted by Caddy, 421 = Host/SNI mismatch, 401/403/404 = rejected by the gateway; `datepattern ^.*"ts":{EPOCH}`, filter verified with `fail2ban-regex`). A client disconnecting before any response also logs status 0, but a real client always sends the bearer header and gets a 200 before streaming, so this hasn't bitten. CrowdSec was rejected: it pulls hub configs and blocklists at runtime (priority 1). The module's default `sshd` jail stays on; it's harmless.
 - **Repo:** private GitHub repo `nixos-config` (`origin`). The workstation checkout is the only place the config is edited; push after committing. Commits use the GitHub noreply email (set in this repo's `.git/config`).
+- **Claude Code on TEMPLAR:** runs in Claude Code's sandbox (bubblewrap) with the user's global settings (read block outside the working directories, strict sandbox, domain allowlist) plus an untracked `.claude/settings.local.json` that is deliberately not in the repo. Facts, verified with Claude Code's own sandbox on 2026-11-11:
+  - Runs outside the sandbox, unattended: `./test.sh`, `git fetch [origin …]`, `git push [-u] origin claude/…`, and `gh pr create|view|list|diff|checks`. Everything else is sandboxed, where git and gh have no credentials, so `git pull` fails: fetch, then merge or rebase. Push to master, force pushes and deleting branches are denied.
+  - `gh pr create` stays sandboxed, so it fails, when the call has a heredoc, a redirect or `$(…)`. Write the description to `.pr-body.md` (gitignored) and pass `--body-file .pr-body.md`; absolute, `~` and `..` paths are denied.
+  - Claude can't write `test.sh`, `deploy.sh`, `.sops.yaml`, `hosts/arbiter/secrets.yaml` or `.gitmodules`, and has no sops access. Secrets are the user's.
+  - Nix works sandboxed: the daemon socket is reachable because Unix sockets are allowed, while `/run/user`, `/run/dbus`, the X11 and ssh-agent socket directories are hidden (with the session bus reachable, `systemd-run --user` starts programs outside the sandbox). `.gitmodules` must stay a real file: the sandbox masks a missing one with a `/dev/null` device, and Nix's git fetcher then can't evaluate the flake.
+  - The PII survey runs sandboxed, but its Ollama step can't reach `127.0.0.1` there and falls back to heuristic labels.
 - **Formatter:** `nixfmt-tree` (nixfmt's own `nix fmt` wrapper) with `tree-root-file = "flake.nix"` so it never walks outside the repo.
 
 ## Open decisions (ask the user; don't choose silently)
