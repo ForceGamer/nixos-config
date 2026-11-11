@@ -17,18 +17,28 @@ in
       auth-default-access = "deny-all";
       # Every ntfy identity and its access lives in this file, so it is the one
       # place to audit. Users and tokens are secrets and come from sops below.
-      auth-access = [ "upgrade-notifier:arbiter-alerts:write-only" ];
+      auth-access = [
+        "upgrade-notifier:arbiter-alerts:write-only"
+        "phone:arbiter-alerts:read-only"
+      ];
+      # iOS suspends the app, so only Apple push can wake it, and only ntfy.sh
+      # can send that for the ntfy app. Per message, ntfy.sh gets the message
+      # id and a SHA-256 of base-url/topic, never the content; the phone then
+      # fetches the message from here, over the LAN or WireGuard.
+      upstream-base-url = "https://ntfy.sh";
     };
     environmentFile = config.sops.templates."ntfy.env".path;
   };
 
   sops.secrets."ntfy/upgrade-notifier-hash" = { };
   sops.secrets."ntfy/upgrade-notifier-token" = { };
+  # The iOS app logs in with username and password; it has no token field.
+  sops.secrets."ntfy/phone-hash" = { };
 
   # Single quotes stop systemd from touching the `$` in bcrypt hashes.
   sops.templates."ntfy.env" = {
     content = ''
-      NTFY_AUTH_USERS='upgrade-notifier:${secret "upgrade-notifier-hash"}:user'
+      NTFY_AUTH_USERS='upgrade-notifier:${secret "upgrade-notifier-hash"}:user,phone:${secret "phone-hash"}:user'
       NTFY_AUTH_TOKENS='upgrade-notifier:${secret "upgrade-notifier-token"}:upgrade-alert'
     '';
     restartUnits = [ "ntfy-sh.service" ];
@@ -75,9 +85,18 @@ in
       "~@privileged"
     ];
     UMask = "0077";
-    # Clients reach ntfy only through Caddy on this host. Setting
-    # upstream-base-url (instant iOS push via ntfy.sh) would need egress here.
+    # Clients reach ntfy only through Caddy on this host. The one outbound
+    # connection is the poll request to ntfy.sh, whose addresses can't be
+    # pinned here, so the internet is open and everything private is not
+    # (an allow entry wins over a deny entry; anything unlisted is allowed).
     IPAddressAllow = "localhost";
-    IPAddressDeny = "any";
+    IPAddressDeny = [
+      "10.0.0.0/8"
+      "172.16.0.0/12"
+      "192.168.0.0/16"
+      "100.64.0.0/10"
+      "link-local"
+      "fc00::/7"
+    ];
   };
 }

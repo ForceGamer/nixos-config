@@ -10,7 +10,7 @@
     ../../modules/networking.nix
     ../../modules/nvidia.nix
     ../../modules/auto-upgrade.nix
-    ../../modules/upgrade-alert.nix
+    ../../modules/failure-alert.nix
     ../../modules/wireguard.nix
     ../../modules/claude-vm.nix
     ../../modules/fail2ban.nix
