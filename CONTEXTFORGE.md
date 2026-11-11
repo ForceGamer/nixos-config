@@ -188,6 +188,19 @@ How scoping behaves, and the one rule that keeps it safe:
   (full name before surname, long employer name before its abbreviation,
   address before town), or the shorter rule fires first and the longer one
   never matches, leaving the rest visible.
+- **Text versions of HTML mail glue table cells together**
+  (`Customer Name<first> <last>Invoice Number<digits>Order Status…`). A
+  whole-word rule, which every `secret` is, can't fire on a glued value, and
+  a label rule can't see a glued label. The global label and money rules
+  accept a glued label (a capital followed by a lower-case letter counts as
+  a start); a glued *name* needs a sender-scoped rule on the labels around
+  it, as in `75-battlenet.nix`. The survey shows such a name in a snippet.
+- **Links with a long opaque token** (click tracking, receipt and invoice
+  links, signed parameters) are cut at the token by the global `links`
+  group: `https://host/path/[TOKEN]`. The AI can say that there was a link
+  and where it pointed, not hand it back in working order. Readable slugs,
+  short ids and git commit ids survive; a long id in a link you do want
+  (a shared document, say) does not.
 - **Everything is tested at build time.** `nix flake check` runs the
   plugin's unit tests and then every `examples` entry through the real rule
   set (with each secret replaced by `SECRET_` + its key in UPPER_SNAKE, e.g.
@@ -196,7 +209,9 @@ How scoping behaves, and the one rule that keeps it safe:
   from starting; the stock plugin would have skipped it silently. Remember
   Nix string escaping: `\\b`, `\\d`, `\\.`, `\\$` (a bare `$` is the
   end-of-line anchor). Every rule is case-insensitive unless it opens with
-  its own `(?...)` flags.
+  its own `(?...)` flags; `(?-i:…)` makes one part case-sensitive. The flake
+  only sees files git knows about: `git add` a new rule file first, or the
+  check passes without it.
 
 ### Finding what the rules miss
 
