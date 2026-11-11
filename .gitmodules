@@ -1,0 +1,4 @@
+# Intentionally empty: no submodules.
+# It must exist as a real file. Inside the Claude Code sandbox a missing
+# .gitmodules is masked with a /dev/null device, and Nix's git fetcher
+# then fails to evaluate the flake.
