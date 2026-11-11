@@ -81,7 +81,7 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
     ├── networking.nix   # networkd + nftables firewall
     ├── nvidia.nix       # headless NVIDIA driver (legacy 580 branch)
     ├── auto-upgrade.nix  # unattended updates
-    ├── upgrade-alert.nix # ntfy alert when auto-upgrade fails
+    ├── failure-alert.nix # ntfy alert when a watched unit fails (auto-upgrade, certificate renewal)
     ├── wireguard.nix     # WireGuard VPN into the home LAN (wg0, NAT)
     ├── claude-vm.nix     # host side of the Claude Code microVM (tap, NAT, firewall)
     ├── claude-vm-guest.nix # the microVM's own NixOS config
@@ -178,7 +178,11 @@ nix flake update nixpkgs   # bump nixpkgs pin
 - **sudo:** passwordless wheel (`wheelNeedsPassword = false`), since SSH is key-only.
 - **Admin user:** `admin`, set via `homelab.admin.name` in `hosts/arbiter/default.nix`. Authenticated by TEMPLAR's ed25519 key (`templar`), which also reaches the Claude microVM.
 - **Secrets:** sops-nix (added as a flake input, since nixpkgs has no module that decrypts repo-committed secrets). Operator age key lives on the workstation at `~/.config/sops/age/keys.txt`.
-- **ntfy:** native `services.ntfy-sh`, listening on `127.0.0.1:2586`, `deny-all` by default with declarative users/tokens from sops. One identity so far: `upgrade-notifier`, write-only on `arbiter-alerts`. Served as `https://ntfy.gameforce.me` through Caddy (`base-url` set to that, `behind-proxy` on). Phone user and iOS upstream are still open.
+- **ntfy:** native `services.ntfy-sh`, listening on `127.0.0.1:2586`, `deny-all` by default with declarative users/tokens from sops. Served as `https://ntfy.gameforce.me` through Caddy (`base-url` set to that, `behind-proxy` on). Every identity and its access is in `modules/services/ntfy.nix`: `upgrade-notifier` (write-only on `arbiter-alerts`, token) and `phone` (read-only on `arbiter-alerts`, password, because the iOS app has no token field).
+  - iOS push: `upstream-base-url = "https://ntfy.sh"`. iOS suspends the app, so only Apple push wakes it, and only ntfy.sh can send that for the ntfy app. Per message ntfy.sh gets the message id, a SHA-256 of `base-url/topic`, and ARBITER's WAN address; never the title or body (checked against a local listener). The phone then fetches the message from ARBITER, so it must be on the LAN or WireGuard; otherwise it shows a bare "New message". `base-url` must equal the server URL entered in the app, or no push arrives.
+  - ntfy's sandbox therefore allows the internet and localhost and denies every private range (ntfy.sh's addresses can't be pinned in `IPAddressAllow`).
+  - Alerts: `modules/failure-alert.nix` is a template unit, `failure-alert@<unit>.service`, hooked with `onFailure` to the units in its `watched` list (`nixos-upgrade`, `acme-order-renew-wildcard`). The renewal unit fails only once the certificate is in the last third of its lifetime and still can't renew. `systemctl start failure-alert@test.service` sends a test message.
+  - Outside this repo: the `ntfy/*` sops secrets and the app setup on the phone. See `CADDY.md`.
 - **Domain and exposure:** `homelab.domain = "gameforce.me"`, DNS at Cloudflare. `tun.gameforce.me` → WAN IP via DDNS (WireGuard endpoint); the apex and `*.gameforce.me` → ARBITER's LAN IP in public DNS, all DNS-only (not proxied). **Exposed: WireGuard and the ContextForge MCP endpoint only**, both on `tun.gameforce.me` (UniFi forwards UDP 51820 → 51820 and TCP 443 → ARBITER 47231; no other public DNS name); every other service is for the LAN and WireGuard peers.
 - **Reverse proxy:** native `services.caddy`, TCP 443 only (no port 80, HTTP/3 off), accepted only from private IPv4 sources (`extraInputRules`, so it holds on the host even if UniFi ever forwards 443). Each service module adds its own `services.caddy.virtualHosts` entry on a subdomain of `homelab.domain` with `useACMEHost = "wildcard"`.
   - Certificates: `security.acme.certs.wildcard` (`*.gameforce.me`, lego from nixpkgs) with Cloudflare DNS-01; token `cloudflare/dns-api-token` in sops, passed via `credentialFiles` (LoadCredential). Not Caddy's own ACME: stock Caddy lacks the Cloudflare plugin and a plugin build means extra Go modules compiled locally. Propagation checked against `1.1.1.1:53`.
@@ -214,8 +218,7 @@ nix flake update nixpkgs   # bump nixpkgs pin
 1. **Moving updates to option (a):** a scheduled CI job bumps `flake.lock` and checks the build, and ARBITER's autoUpgrade pulls the repo. Fully declarative, unlike the current option (b), where the running system drifts from the committed lock. Needs CI, and a read-only deploy key generated on ARBITER and never committed.
 2. **VLAN:** ARBITER has a UniFi DHCP reservation; whether to move it to a dedicated server VLAN.
 3. **Values for the placeholders:** `<LAPTOP_WG_PUBKEY>`, and the `cloudflare/dns-api-token` and five `contextforge/*` sops secrets (the build fails until they exist).
-4. **Finishing ntfy for the phone:** whether to set `upstream-base-url = "https://ntfy.sh"` for iOS background push (ntfy.sh then sees message IDs, not content; ntfy then needs egress to ntfy.sh; the phone still fetches over WireGuard). A read-only phone user on `arbiter-alerts`.
-5. **ContextForge follow-ups:** which MCP servers to put behind it and how (remote URL vs. a stdio server that needs its own wrapper service); whether to alert (ntfy) on fail2ban bans; a local-LLM *detector* (Ollama on TEMPLAR for surveys today; as gateway middleware only as a detector-only, fail-closed, email-scoped layer behind the regexes, per the design in the 2026-11-10 discussion: the model lists identifiers, code replaces them with the PII filter's hash); whether to whitelist `messageId` in the PII filter if a tool ever needs it.
+4. **ContextForge follow-ups:** which MCP servers to put behind it and how (remote URL vs. a stdio server that needs its own wrapper service); whether to alert (ntfy) on fail2ban bans; a local-LLM *detector* (Ollama on TEMPLAR for surveys today; as gateway middleware only as a detector-only, fail-closed, email-scoped layer behind the regexes, per the design in the 2026-11-10 discussion: the model lists identifiers, code replaces them with the PII filter's hash); whether to whitelist `messageId` in the PII filter if a tool ever needs it.
 
 ## Later phases (context only; do not implement until asked)
 
@@ -225,7 +228,6 @@ These need decisions of their own first:
 - Backups to the NAS
 - Monitoring and alerting
 - Intrusion detection
-- Notifications to iOS (ntfy runs; exposing it to the phone is open decision 4)
 - Seafile, Immich, Paperless (data on the NAS)
 - Plex under strict least privilege
 - A calendar server

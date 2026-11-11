@@ -173,23 +173,100 @@ nix run nixpkgs#nixos-rebuild -- switch --flake .#arbiter --target-host admin@ar
   cause before retrying with
   `sudo systemctl start acme-order-renew-wildcard.service`.
 
-## 5. Not done yet (open decision 4)
+## 5. ntfy on the iPhone
 
-These need decisions from you; ask Claude to do them once you've chosen:
+What the config does:
 
-- **A read-only phone user** on `arbiter-alerts`. Until it exists the phone can
-  reach ntfy but has no account to subscribe with. It needs a bcrypt hash and a
-  token in `secrets.yaml`, like `upgrade-notifier`.
-- **iOS background push:** `upstream-base-url = "https://ntfy.sh"`. Apple only
-  delivers push through ntfy.sh's APNs account, so without it the iOS app gets
-  notifications only while it's open. With it, ntfy.sh sees message IDs and
-  hashed topic names (not content) and wakes the app, which then fetches the
-  message from ARBITER, so this still needs WireGuard up. ntfy also needs
-  outbound access to ntfy.sh (its sandbox currently allows only localhost).
-- **Alert on failed renewals:** a failing `acme-order-renew-wildcard.service`
-  is silent, like `nixos-upgrade` was before `upgrade-alert`. There are about
-  30 days of margin before expiry, so it's worth hooking the same ntfy alert to
-  it.
+- **A `phone` user** that can read `arbiter-alerts` and nothing else. It can't
+  publish. The iOS app logs in with username and password, so this user has a
+  password hash and no token.
+- **Push through ntfy.sh** (`upstream-base-url`). iOS suspends the app, so only
+  Apple push can wake it, and only ntfy.sh can send that for the ntfy app. For
+  each message ARBITER sends ntfy.sh an empty request carrying the message id
+  and a SHA-256 of `https://ntfy.gameforce.me/<topic>`. ntfy.sh also sees your
+  WAN address and when alerts happen. It never gets the title or the text. The
+  phone is woken and fetches the message from ARBITER itself, so it has to be
+  at home or on WireGuard at that moment.
+  - The hash doesn't hide a topic name someone can guess. Knowing it gives no
+    access to the alerts: reading them takes the phone's account on ARBITER.
+- **ntfy's sandbox** now allows outbound connections to the internet (ntfy.sh's
+  addresses can't be pinned) and still denies every private range, so ntfy
+  can't reach the LAN.
+- **Alerts** come from one template unit, `failure-alert@<unit>.service`
+  (`modules/failure-alert.nix`). It fires when `nixos-upgrade` fails, and when
+  `acme-order-renew-wildcard` fails. The renewal unit only fails once the
+  certificate is in the last third of its lifetime (30 days for a 90-day
+  certificate) and still can't be renewed; from then on it alerts once a day.
+
+### 5.1 Put the phone's password hash in sops
+
+Pick a password for the phone, then on TEMPLAR, in the repo:
+
+```sh
+nix run --inputs-from . nixpkgs#ntfy-sh -- user hash   # asks twice, prints the bcrypt hash
+sops hosts/arbiter/secrets.yaml
+```
+
+Add one line under the existing `ntfy:` key:
+
+```yaml
+ntfy:
+    phone-hash: <BCRYPT_HASH>
+```
+
+**The build fails until this key exists**, as with the other secrets. An unused
+key is harmless, so it can be committed before this change is merged.
+
+### 5.2 Deploy and check
+
+Build and deploy as in step 4 (`switch` is enough; the firewall is unchanged).
+Then:
+
+```sh
+systemctl status ntfy-sh.service               # on ARBITER
+curl -sS https://ntfy.gameforce.me/v1/health   # from TEMPLAR; expect {"healthy":true}
+```
+
+A malformed hash stops ntfy from starting; the status output names it
+(`invalid auth-users`).
+
+### 5.3 Set up the app
+
+Install **ntfy** from the App Store, then in the app:
+
+1. **Settings → Default server:** `https://ntfy.gameforce.me`. It must be
+   exactly this, with no trailing slash: the push topic is derived from it.
+2. **Settings → Users → Add user:** service URL `https://ntfy.gameforce.me`,
+   username `phone`, and the password from 5.1.
+3. **Add subscription:** topic `arbiter-alerts`.
+4. Allow notifications when iOS asks.
+
+WireGuard's **On-Demand** (step 3) is what makes this work away from home.
+
+### 5.4 Test
+
+Lock the phone, then on ARBITER:
+
+```sh
+sudo systemctl start failure-alert@test.service
+```
+
+A notification titled "test failed on arbiter" should show up. Repeat on
+cellular with WireGuard on.
+
+- **A notification that only says "New message":** the push arrived but the
+  phone couldn't reach ARBITER. Check WireGuard, and that
+  `https://ntfy.gameforce.me/v1/health` opens in Safari.
+- **Nothing at all, but the message is there when you open the app:** the push
+  didn't arrive. Look for `Unable to publish poll request` in
+  `journalctl -u ntfy-sh.service`, check the default server from 5.3, and
+  remove and re-add the subscription (ntfy's own advice for this case).
+- **The app says login failed:** the password doesn't match the hash in sops.
+  Redo 5.1 and deploy again.
+
+### Still open
+
+- **Alerting on fail2ban bans** (open decision 4 in `CLAUDE.md`).
 
 ## Rollback
 
