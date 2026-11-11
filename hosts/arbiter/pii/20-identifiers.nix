@@ -3,6 +3,12 @@
 # Every `search` is a Python regex. Nix string escaping applies: `\\b`,
 # `\\d`, `\\.`, `\\$` (a bare `$` is the end-of-line anchor). Rules are
 # case-insensitive unless they open with their own `(?...)` flags.
+#
+# Text versions of HTML mail often run table cells together, so a label can
+# be glued to the value before it ("Basic IIReceipt: 123", "NOKVoucher
+# X1"). The label rules therefore start at a word boundary *or* at a capital
+# followed by a lower-case letter (`(?-i:…)` is the one case-sensitive spot),
+# which is how a glued label looks and ordinary words don't.
 {
   name = "identifiers";
   when = null;
@@ -23,8 +29,15 @@
       # least one digit. Keeps the label, so the model still sees that there
       # was an order number. Accepts a plural "s" (Kvitterings nr.), a verb
       # (ordrenummer er 123), and runs of #, : and markdown * in between.
-      search = "\\b((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)s?(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?(?:\\s+(?:er|is))?\\s*(?:[#:*]\\s*)*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9-]*\\d)[A-Z0-9][A-Z0-9-]{4,29}\\b";
+      # Underscores are part of the token for ids like in_1AbC… (Stripe).
+      search = "(?:\\b|(?=(?-i:[A-Z][a-z])))((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)s?(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?(?:\\s+(?:er|is))?\\s*(?:[#:*]\\s*)*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9_-]*\\d)[A-Z0-9][A-Z0-9_-]{4,29}\\b";
       replace = "\\1[ORDER]";
+    }
+    {
+      # Voucher codes: a value in themselves (prepaid Wi-Fi, gift codes).
+      # Not `voucher=` in a link; shops that need that have their own rule.
+      search = "(?:\\b|(?=(?-i:[A-Z][a-z])))(voucher(?:\\s*(?:code|kode|number|nummer|no|nr))?\\.?\\s*(?:[#:*]\\s*)*)(?=[A-Z0-9_-]*\\d)[A-Z0-9][A-Z0-9_-]{4,29}\\b";
+      replace = "\\1[VOUCHER]";
     }
     {
       # Customer/account numbers after a label.
@@ -63,6 +76,20 @@
     {
       input = "Betalings id: 3f2a1b9c-7d4e-4f10-9a2b-1c3d5e7f9a0b, sporing/70712345678901234";
       expect = "Betalings id: [UUID], sporing/[LONG_ID]";
+    }
+    {
+      # Labels glued to the previous value (from the survey report): the
+      # number takes the word glued to its end with it.
+      input = "Plan Name: Basic IIReceipt: 123-12345678Paid 49 NOKVoucher Wifi12345678 Total";
+      expect = "Plan Name: Basic IIReceipt: [ORDER] [AMOUNT]Voucher [VOUCHER] Total";
+    }
+    {
+      input = "Date: October 24, 2026 Invoice ID: in_1AbCdEfGhIjKlMnOpQrStUvW Description: 1 × Plan";
+      expect = "Date: October 24, 2026 Invoice ID: [ORDER] Description: 1 × Plan";
+    }
+    {
+      input = "Voucher code: AB12-CD34 is valid; see our voucher terms 2026 and border 10px";
+      expect = "Voucher code: [VOUCHER] is valid; see our voucher terms 2026 and border 10px";
     }
     {
       input = "Tracking: JJD000123456789";
