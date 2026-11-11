@@ -12,6 +12,8 @@ let
     # Fails only once the certificate is inside its renewal window (the last
     # third of its lifetime) and lego still can't renew, then daily until fixed.
     "acme-order-renew-wildcard"
+    # Reports its own results; this covers the script itself crashing.
+    "merge-test"
   ];
 in
 {
