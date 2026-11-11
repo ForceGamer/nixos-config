@@ -1,3 +1,6 @@
 # nix build output links
 result
 result-*
+
+# PR description handed to `gh pr create --body-file` (see CLAUDE.md)
+.pr-body.md
