@@ -60,6 +60,13 @@
             cp report "$out"
           '';
 
+      # The dead man's switch behind merge-test, in a VM: kept when healthy,
+      # rolled back on failure, and rolled back by its timer when the script
+      # dies after activating.
+      checks.x86_64-linux.merge-test = import ./modules/merge-test/test.nix {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      };
+
       # nixfmt's own wrapper for `nix fmt`; bare nixfmt no longer accepts
       # directories. Anchor the tree root on flake.nix so formatting never
       # wanders outside the repo when it isn't a git checkout.

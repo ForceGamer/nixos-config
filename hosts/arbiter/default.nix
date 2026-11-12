@@ -11,6 +11,7 @@
     ../../modules/nvidia.nix
     ../../modules/auto-upgrade.nix
     ../../modules/failure-alert.nix
+    ../../modules/merge-test
     ../../modules/wireguard.nix
     ../../modules/claude-vm.nix
     ../../modules/fail2ban.nix
