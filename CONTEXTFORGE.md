@@ -161,8 +161,11 @@ To store a regex instead of a literal name, use `./add-pii.sh -r <key>`.
 
 ### Rule files
 
-`hosts/arbiter/pii/*.nix`, one rule group each, loaded in filename order
-(`homelab.contextforge.rulesDir`). A file looks like:
+`hosts/arbiter/pii/*.nix` (the global list, `homelab.contextforge.rulesDir`)
+and `hosts/arbiter/pii/servers/<name>/*.nix` (one server's list, see "Rule
+lists per server"), one rule group each, loaded in filename order. Groups
+scoped to one sender go in the list of the server their mail comes from
+(`servers/fastmail/`). A file looks like:
 
 ```nix
 {
@@ -204,7 +207,7 @@ How scoping behaves, and the one rule that keeps it safe:
   a label rule can't see a glued label. The global label and money rules
   accept a glued label (a capital followed by a lower-case letter counts as
   a start); a glued *name* needs a sender-scoped rule on the labels around
-  it, as in `75-battlenet.nix`. The survey shows such a name in a snippet.
+  it, as in `servers/fastmail/75-battlenet.nix`. The survey shows such a name in a snippet.
 - **Links with a long opaque token** (click tracking, receipt and invoice
   links, signed parameters) are cut at the token by the global `links`
   group: `https://host/path/[TOKEN]`. The AI can say that there was a link
@@ -234,6 +237,10 @@ homelab.contextforge.servers.fastmail = {
   rulesDir = ./pii/servers/fastmail;   # same file format as above
 };
 ```
+
+On ARBITER, Fastmail's list holds the per-sender groups (Bring, Stripe,
+Elkjøp, …); the global list keeps people, links, identifiers and amounts,
+which can turn up in any server's text.
 
 - **The id is the upstream server's (Gateways), not the virtual server's.**
   In v1.1.0 a plugin can't tell which virtual server a tool call came
