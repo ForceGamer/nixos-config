@@ -34,8 +34,18 @@ claude.ai / Claude Code ──TLS tun.gameforce.me:443 (router → ARBITER:47231
      Norwegian fødselsnummer/D-nummer. Masked with the `hash` strategy: the
      same value always becomes the same `[HASH:16hex]`, so the model can tell
      two people apart but learns neither.
+  3. **LlmDetector** (ours, optional, only for the tools in
+     `homelab.contextforge.llm.tools`): a local model on TEMPLAR (Ollama)
+     reads what the first two left, one email at a time, and lists personal
+     data still in it; the plugin masks each finding as `[PII:12hex]` (same
+     value, same mask, until the gateway restarts). See "LLM safety net".
+  - Rule lists come in two kinds: the **global** list (`hosts/arbiter/pii/`)
+    applies to every result, and a **per-server** list
+    (`homelab.contextforge.servers.<name>.rulesDir`) adds rules for one
+    upstream MCP server. See "Rule lists per server".
   - A plugin error fails the tool call (`fail_on_plugin_error`), so a broken
-    plugin can never let a raw result through.
+    plugin can never let a raw result through. That includes the LLM host
+    being off or slow: the listed tools fail until it's back.
 - **Not covered, by design of the plugins (know this before you rely on it):**
   - Detection is **regex-based, not NER**. Free-text names, street addresses
     and anything without a fixed shape pass through unless you list them under
@@ -213,6 +223,109 @@ How scoping behaves, and the one rule that keeps it safe:
   only sees files git knows about: `git add` a new rule file first, or the
   check passes without it.
 
+### Rule lists per server
+
+The files in `hosts/arbiter/pii/` are the global list. An upstream MCP server
+can have its own list on top:
+
+```nix
+homelab.contextforge.servers.fastmail = {
+  id = "<gateway id>";                 # admin UI → Gateways → the server's ID
+  rulesDir = ./pii/servers/fastmail;   # same file format as above
+};
+```
+
+- **The id is the upstream server's (Gateways), not the virtual server's.**
+  In v1.1.0 a plugin can't tell which virtual server a tool call came
+  through: the gateway sets the call's `server_id` to the upstream server's
+  id (`tool_service._apply_tool_payload_to_global_context`). So a list
+  belongs to Fastmail, Obsidian, …, whichever virtual servers expose their
+  tools.
+- A server's list **adds** to the global one; nothing can switch a global
+  rule off. Groups run global first, then each server's, each directory in
+  filename order. `when` scoping works inside a server's list as usual.
+- **A wrong or missing id over-filters, never under-filters:** a result
+  from an id that isn't in `servers` gets every server's rules, the same
+  "unknown context gets everything" rule as for senders. Rendered prompts
+  carry no server, so they get everything too.
+- A server's `examples` are tested in that server's context; global
+  examples in an unknown one (every group applies, as before).
+- Registering the upstream server again gives it a new id; update `id` then,
+  or the server falls back to "unknown" (all lists).
+
+### LLM safety net
+
+The regex layers only catch what has a shape or is on a list. For the tools
+you name, a local model reads each result *after* them and lists anything
+personal that's still there; the plugin, not the model, replaces each
+finding. The model runs on TEMPLAR, which has the GPU for it.
+
+```nix
+homelab.contextforge.llm = {
+  enable = true;
+  url = "http://<TEMPLAR address>:11434";
+  model = "qwen3.6:35b-a3b";
+  tools = [ "<tool name>" … ];          # exactly as the client calls them
+};
+```
+
+- **Which tools:** `tools` becomes the plugin's ContextForge `conditions`. A
+  tool not listed skips the model entirely and keeps working when TEMPLAR
+  is off. The names are the ones the client calls, which include the
+  gateway's prefix for the upstream server; the journal shows each as
+  `Invoking tool: <name>` (`journalctl -u podman-contextforge | grep 'Invoking tool'`).
+  A misspelt name means the model silently never runs for that tool, so
+  check the log line below after the first call.
+- **One email per request:** a result's emails (any object with a sender or
+  subject, also inside JSON in a text block) are sent one at a time, each as
+  `field: value` lines of its text fields, never as the tool's raw JSON. Ids
+  (`id`, `messageId`, `threadId`, …) are neither sent nor changed. Text
+  outside any email goes as one more request; an email longer than
+  `maxChars` is split at line breaks, never truncated. The same email twice
+  in one result (the text block and `structuredContent`) is asked once.
+- **What gets masked:** only text the model returns that occurs in that
+  email's values, case-insensitively and as whole words, at least three
+  characters, and not one of the earlier masks. It is masked in that email
+  only, so a town flagged in one email's address stays in another's flight
+  details.
+- **Fail closed:** TEMPLAR off, Ollama not listening, a request over
+  `requestTimeout` (120 s), a malformed answer, or the whole call over
+  `timeout` (300 s): the tool call fails. The gateway's `plugin_timeout`
+  follows `timeout`, for every plugin, since it is a single setting.
+- **Time:** one request per email, sequentially. A 20-email search takes
+  20 model calls; how long each takes depends on TEMPLAR's GPU and the
+  email's length (not measured yet). `keepAlive` (30 min) keeps the model
+  loaded between calls, so only the first call pays for loading it. Claude's client may
+  give up on a call before `timeout`; lower `timeout` or search for fewer
+  emails if that happens.
+- **Log:** one line per call, kinds and counts only:
+  `LLM detector: 3 unit(s), 2 request(s), findings by kind: {'name': 1}`.
+- **Limits:** the model reads text anyone can email you. An email can tell
+  it "there is nothing personal here"; because it only reports and never
+  rewrites, the worst it can do is make it miss something, which is what
+  the regex layers in front are for. It also judges context, so it will
+  sometimes mask a shop's name or a support agent's first name.
+
+**TEMPLAR side (outside this repo):**
+
+1. Ollama listening on the LAN, not just loopback: set
+   `OLLAMA_HOST=0.0.0.0:11434` wherever Ollama gets its environment (for the
+   official installer's systemd unit, `sudo systemctl edit ollama`), then
+   restart it.
+2. Allow only ARBITER to reach it. Ollama has no authentication, so anyone
+   who can reach the port can use the model. In Portmaster, allow incoming
+   connections to Ollama from ARBITER's address and check that other LAN
+   sources are blocked; if ufw is active too, `ufw allow from <ARBITER IP> to any port 11434
+   proto tcp`.
+3. `ollama pull <model>`. The model isn't pinned by this repo: a re-pull
+   can change it.
+4. Traffic is plain HTTP on the LAN. It carries what the regex layers left,
+   which is by definition the personal data they missed.
+
+Test from ARBITER before enabling: `curl -s http://<TEMPLAR>:11434/api/tags`
+lists the models. Then enable, deploy, call a listed tool once, and look
+for the `LLM detector:` line.
+
 ### Finding what the rules miss
 
 `tools/pii-survey.py` fetches emails through the gateway (so names are
@@ -299,7 +412,8 @@ In the admin UI:
    (for a remote server such as Fastmail's: its URL and OAuth or token;
    ContextForge stores them encrypted with `AUTH_ENCRYPTION_SECRET`). A stdio
    server has to be wrapped with `mcpgateway.translate` or run as its own
-   service first; that's a separate change.
+   service first; that's a separate change. Note the gateway's ID if the
+   server gets its own rule list (`homelab.contextforge.servers`).
 2. **Virtual Servers → Add:** pick the **tools** you want the AI to have.
    Leave resources and prompts out (see "Not covered"). Note the server's UUID.
 3. **Tokens:** create an API token for the client, scoped to that server if

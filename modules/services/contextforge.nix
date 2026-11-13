@@ -1,8 +1,10 @@
 # ContextForge (IBM's MCP gateway) as a PII-scrubbing proxy between MCP
 # servers that return personal data (mail, notes, ...) and the AI clients that
-# call them. Tool results pass through two plugins before leaving the gateway:
-# the regex-based PII filter (hashes e-mails, phone numbers, IBANs, ...) and a
-# search-and-replace list for names that no generic pattern can catch.
+# call them. Tool results pass through our search-and-replace rules (a global
+# list plus one per upstream server, for names and patterns no generic filter
+# can know), then the regex-based PII filter (hashes e-mails, phone numbers,
+# IBANs, ...), then, for the tools listed in `llm.tools`, a local LLM on
+# another host that looks for anything the first two missed.
 #
 # Two faces, both on this host:
 #   https://mcp-admin.<domain>        LAN and WireGuard only (admin UI and API).
@@ -94,6 +96,14 @@ let
         type = lib.types.str;
         description = "Label used in test output.";
       };
+      server = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          Name in `servers` this group belongs to; null for the global list.
+          Set by the loader for files in a server's `rulesDir`.
+        '';
+      };
       when = lib.mkOption {
         type = lib.types.nullOr (
           lib.types.submodule {
@@ -148,21 +158,37 @@ let
   # What the plugin receives. Secret-backed rules carry sops placeholders,
   # substituted when the template is rendered on the host.
   filterConfig = {
+    # Gateway id → name; the plugin sees only the id.
+    servers = lib.mapAttrs' (name: s: lib.nameValuePair s.id name) cfg.servers;
     groups = map (g: {
-      inherit (g) name;
+      inherit (g) name server;
       when = if g.when == null then null else { inherit (g.when) from subject; };
       rules = map (r: { inherit (r) search replace; }) g.rules;
     }) cfg.ruleGroups;
   };
+
+  # One directory of rule files, in filename order.
+  loadRules =
+    dir:
+    map (f: import (dir + "/${f}")) (
+      lib.sort lib.lessThan (
+        lib.filter (lib.hasSuffix ".nix") (builtins.attrNames (builtins.readDir dir))
+      )
+    );
+
+  llm = cfg.llm;
+  llmOn = llm.enable;
   secretsUsed = lib.unique (
     lib.concatMap (g: map (r: r.secret) (lib.filter (r: r.secret != null) g.rules)) cfg.ruleGroups
   );
 
-  # The plugin, mounted into the image's plugins/ package.
-  pluginDir = pkgs.runCommand "contextforge-scoped-filter" { } ''
+  # Our plugins, mounted into the image's plugins/ package.
+  pluginDir = pkgs.runCommand "contextforge-plugins" { } ''
     mkdir -p "$out"
     cp ${./contextforge/scoped_filter.py} "$out/scoped_filter.py"
     cp ${./contextforge/scoped_filter_core.py} "$out/scoped_filter_core.py"
+    cp ${./contextforge/llm_detector.py} "$out/llm_detector.py"
+    cp ${./contextforge/llm_detector_core.py} "$out/llm_detector_core.py"
     : > "$out/__init__.py"
   '';
 
@@ -190,6 +216,7 @@ let
                 from
                 subject
                 ;
+              inherit (g) server;
               group = g.name;
             }) g.examples
           ) cfg.ruleGroups
@@ -202,7 +229,9 @@ let
       ''
         cp ${./contextforge/scoped_filter_core.py} scoped_filter_core.py
         cp ${./contextforge/test_scoped_filter.py} test_scoped_filter.py
-        CONFIG="$configPath" EXAMPLES="$examplesPath" python3 -m unittest -v test_scoped_filter
+        cp ${./contextforge/llm_detector_core.py} llm_detector_core.py
+        cp ${./contextforge/test_llm_detector.py} test_llm_detector.py
+        CONFIG="$configPath" EXAMPLES="$examplesPath" python3 -m unittest -v test_scoped_filter test_llm_detector
         touch "$out"
       '';
   plugins = {
@@ -210,7 +239,10 @@ let
       # A plugin error must fail the call, never let the raw result through.
       fail_on_plugin_error = true;
       parallel_execution_within_band = false;
-      plugin_timeout = 30;
+      # One limit for every plugin (cpex 0.1.4 has no per-plugin timeout). The
+      # LLM detector needs minutes for a long search; the regex plugins take
+      # milliseconds, so the higher limit costs them nothing.
+      plugin_timeout = if llmOn then llm.timeout + 15 else 30;
     };
     plugins = [
       {
@@ -268,7 +300,27 @@ let
           whitelist_patterns = [ ];
         };
       }
-    ];
+    ]
+    ++ lib.optional llmOn {
+      # Last, so the model sees only what the regex plugins left: less to
+      # send over the LAN, and less for it to read.
+      name = "LlmDetector";
+      kind = "plugins.custom.llm_detector.LlmDetectorPlugin";
+      hooks = [ "tool_post_invoke" ];
+      mode = "enforce";
+      priority = 60;
+      # Matched against the tool name the client called (the gateway logs it
+      # as "Invoking tool: <name>"). A tool not listed skips the detector.
+      conditions = [ { tools = llm.tools; } ];
+      config = {
+        inherit (llm) url model;
+        request_timeout = llm.requestTimeout;
+        budget_seconds = llm.timeout;
+        num_ctx = llm.numCtx;
+        keep_alive = llm.keepAlive;
+        max_chars = llm.maxChars;
+      };
+    };
   };
 in
 {
@@ -297,6 +349,86 @@ in
         can't know. Keep the names themselves out of the repo: use `secret`.
       '';
     };
+    servers = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            id = lib.mkOption {
+              type = lib.types.str;
+              example = "8f14e45fceea167a5a36dedd4bea2543";
+              description = ''
+                The upstream MCP server's id in the gateway (admin UI →
+                Gateways). Not the virtual server's: in v1.1.0 a tool call's
+                plugin context carries the upstream id only. A wrong id makes
+                the server unknown, and an unknown server gets every server's
+                rules, so a mistake filters more, never less.
+              '';
+            };
+            rulesDir = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              description = ''
+                Rule files for this server only, in the same format as
+                `rulesDir`. They add to the global list, never replace it.
+              '';
+            };
+          };
+        }
+      );
+      default = { };
+      description = "Upstream MCP servers with rule groups of their own, by a name of your choice.";
+    };
+    llm = {
+      enable = lib.mkEnableOption "the local-LLM detector behind the regex plugins";
+      url = lib.mkOption {
+        type = lib.types.str;
+        example = "http://templar.lan:11434";
+        description = "Ollama base URL, reachable from inside the container.";
+      };
+      model = lib.mkOption {
+        type = lib.types.str;
+        example = "qwen3.6:35b-a3b";
+        description = "Ollama model name (must be pulled on the LLM host).";
+      };
+      tools = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = ''
+          Tool names whose results go through the model, exactly as the
+          client calls them. Every other tool skips it, and keeps working
+          while the LLM host is off.
+        '';
+      };
+      timeout = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 300;
+        description = ''
+          Seconds one tool call may spend in the model, all emails together.
+          Past it the call fails. Also sets the gateway's plugin timeout
+          (this plus 15 s).
+        '';
+      };
+      requestTimeout = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 120;
+        description = "Seconds for one Ollama request (one email, or one part of a long one).";
+      };
+      numCtx = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 16384;
+        description = "Ollama context length per request.";
+      };
+      keepAlive = lib.mkOption {
+        type = lib.types.str;
+        default = "30m";
+        description = "How long Ollama keeps the model loaded after a request.";
+      };
+      maxChars = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 12000;
+        description = "Longest text per request; a longer email is split at line breaks.";
+      };
+    };
     publicPort = lib.mkOption {
       type = lib.types.port;
       default = 8443;
@@ -316,13 +448,35 @@ in
   };
 
   config = {
-    homelab.contextforge.ruleGroups = lib.mkIf (cfg.rulesDir != null) (
-      map (f: import (cfg.rulesDir + "/${f}")) (
-        lib.sort lib.lessThan (
-          lib.filter (lib.hasSuffix ".nix") (builtins.attrNames (builtins.readDir cfg.rulesDir))
-        )
-      )
-    );
+    # Global groups first, then each server's (by name); within a directory,
+    # filename order.
+    homelab.contextforge.ruleGroups =
+      lib.optionals (cfg.rulesDir != null) (loadRules cfg.rulesDir)
+      ++ lib.concatLists (
+        lib.mapAttrsToList (
+          name: s:
+          lib.optionals (s.rulesDir != null) (map (g: g // { server = name; }) (loadRules s.rulesDir))
+        ) cfg.servers
+      );
+
+    assertions = [
+      {
+        assertion =
+          let
+            ids = lib.mapAttrsToList (_: s: s.id) cfg.servers;
+          in
+          lib.length ids == lib.length (lib.unique ids);
+        message = "homelab.contextforge.servers: two servers share an id.";
+      }
+      {
+        assertion = !llm.enable || llm.tools != [ ];
+        message = "homelab.contextforge.llm.enable needs at least one tool in llm.tools.";
+      }
+      {
+        assertion = llm.timeout > llm.requestTimeout;
+        message = "homelab.contextforge.llm.timeout must exceed llm.requestTimeout.";
+      }
+    ];
 
     virtualisation.podman = {
       enable = true;

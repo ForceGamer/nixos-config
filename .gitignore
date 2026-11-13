@@ -4,3 +4,5 @@ result-*
 
 # PR description handed to `gh pr create --body-file` (see CLAUDE.md)
 .pr-body.md
+# Running the plugin tests by hand
+__pycache__/
