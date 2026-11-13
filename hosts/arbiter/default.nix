@@ -36,13 +36,17 @@
   # Names and patterns the generic PII filter can't know, replaced in every
   # tool result before it reaches an AI client. One file per rule group in
   # pii/, applied in filename order; a group can be scoped to a sender or
-  # subject (see CONTEXTFORGE.md). Add a name with ./add-pii.sh.
+  # subject (see CONTEXTFORGE.md). Add a name with ./add-pii.sh. This is the
+  # global list: people, links, identifiers, amounts, for every server.
   homelab.contextforge.rulesDir = ./pii;
 
-  # Upstream MCP servers by their gateway id (admin UI → Gateways). Declaring
-  # one makes it a known server: it gets the global list plus its own, if
-  # any. No Fastmail-only list yet.
-  homelab.contextforge.servers.fastmail.id = "95002935e45f4c67a039d2579cc06b4d";
+  # Upstream MCP servers by their gateway id (admin UI → Gateways), each with
+  # rules for it alone, run after the global list. Fastmail's are the
+  # per-sender groups (one shop or service each).
+  homelab.contextforge.servers.fastmail = {
+    id = "95002935e45f4c67a039d2579cc06b4d";
+    rulesDir = ./pii/servers/fastmail;
+  };
 
   # Local model on TEMPLAR as the last filter, for every tool. Fail closed:
   # while TEMPLAR or its Ollama is unreachable, every tool call fails. The
