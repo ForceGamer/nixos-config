@@ -46,8 +46,7 @@
 
   # Local model on TEMPLAR as the last filter, for every tool. Fail closed:
   # while TEMPLAR or its Ollama is unreachable, every tool call fails. The
-  # address must stay TEMPLAR's: reserve it in UniFi, or a new lease breaks
-  # every tool call.
+  # address is TEMPLAR's UniFi DHCP reservation.
   homelab.contextforge.llm = {
     enable = true;
     url = "http://192.168.1.145:11434";
