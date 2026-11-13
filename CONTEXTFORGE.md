@@ -34,8 +34,8 @@ claude.ai / Claude Code ──TLS tun.gameforce.me:443 (router → ARBITER:47231
      Norwegian fødselsnummer/D-nummer. Masked with the `hash` strategy: the
      same value always becomes the same `[HASH:16hex]`, so the model can tell
      two people apart but learns neither.
-  3. **LlmDetector** (ours, optional, only for the tools in
-     `homelab.contextforge.llm.tools`): a local model on TEMPLAR (Ollama)
+  3. **LlmDetector** (ours, optional, for every tool not in
+     `homelab.contextforge.llm.excludeTools`): a local model on TEMPLAR (Ollama)
      reads what the first two left, one email at a time, and lists personal
      data still in it; the plugin masks each finding as `[PII:12hex]` (same
      value, same mask, until the gateway restarts). See "LLM safety net".
@@ -45,7 +45,7 @@ claude.ai / Claude Code ──TLS tun.gameforce.me:443 (router → ARBITER:47231
     upstream MCP server. See "Rule lists per server".
   - A plugin error fails the tool call (`fail_on_plugin_error`), so a broken
     plugin can never let a raw result through. That includes the LLM host
-    being off or slow: the listed tools fail until it's back.
+    being off or slow: every tool that isn't excluded fails until it's back.
 - **Not covered, by design of the plugins (know this before you rely on it):**
   - Detection is **regex-based, not NER**. Free-text names, street addresses
     and anything without a fixed shape pass through unless you list them under
@@ -255,8 +255,8 @@ homelab.contextforge.servers.fastmail = {
 
 ### LLM safety net
 
-The regex layers only catch what has a shape or is on a list. For the tools
-you name, a local model reads each result *after* them and lists anything
+The regex layers only catch what has a shape or is on a list. For every
+tool, a local model reads each result *after* them and lists anything
 personal that's still there; the plugin, not the model, replaces each
 finding. The model runs on TEMPLAR, which has the GPU for it.
 
@@ -265,17 +265,18 @@ homelab.contextforge.llm = {
   enable = true;
   url = "http://<TEMPLAR address>:11434";
   model = "qwen3.6:35b-a3b";
-  tools = [ "<tool name>" … ];          # exactly as the client calls them
+  excludeTools = [ ];                  # tools that skip it, exactly as the client calls them
 };
 ```
 
-- **Which tools:** `tools` becomes the plugin's ContextForge `conditions`. A
-  tool not listed skips the model entirely and keeps working when TEMPLAR
-  is off. The names are the ones the client calls, which include the
-  gateway's prefix for the upstream server; the journal shows each as
-  `Invoking tool: <name>` (`journalctl -u podman-contextforge | grep 'Invoking tool'`).
-  A misspelt name means the model silently never runs for that tool, so
-  check the log line below after the first call.
+- **Which tools:** all of them, except those in `excludeTools` (a
+  blacklist). The plugin checks the name itself; ContextForge's `conditions`
+  can only allow-list. An excluded tool skips the model and keeps working
+  when TEMPLAR is off; every other tool fails then. Names are the ones the
+  client calls, which include the gateway's prefix for the upstream server;
+  the journal shows each as `Invoking tool: <name>`
+  (`journalctl -u podman-contextforge | grep 'Invoking tool'`). Only exact
+  names are excluded, so a misspelt one still goes through the model.
 - **One email per request:** a result's emails (any object with a sender or
   subject, also inside JSON in a text block) are sent one at a time, each as
   `field: value` lines of its text fields, never as the tool's raw JSON. Ids

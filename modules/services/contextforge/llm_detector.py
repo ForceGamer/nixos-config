@@ -1,7 +1,7 @@
 # ContextForge plugin: a local LLM as a safety net behind the regex plugins.
 # The logic lives in llm_detector_core.py; this file only adapts it to the
-# plugin framework. Which tools it runs on is the plugin's `conditions`
-# (set from homelab.contextforge.llm.tools), not code here.
+# plugin framework. It runs on every tool except those in `exclude_tools`
+# (homelab.contextforge.llm.excludeTools).
 import asyncio
 import time
 
@@ -26,7 +26,7 @@ class LlmDetectorPlugin(Plugin):
         self._budget = float(cfg.get("budget_seconds", 280))
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
-        if payload.result:
+        if payload.result and not self._detector.skips(payload.name):
             deadline = time.monotonic() + self._budget
             # In a thread: one gunicorn worker serves every request, and
             # urllib would block it for as long as the model takes.

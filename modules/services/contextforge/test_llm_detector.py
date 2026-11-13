@@ -107,6 +107,18 @@ class Masking(unittest.TestCase):
         self.assertRegex(out, r"Hi \[PII:")
 
 
+class Exclusion(unittest.TestCase):
+    def test_every_tool_by_default(self):
+        self.assertFalse(LlmDetector({}, ask=FakeModel()).skips("mail-search"))
+
+    def test_only_exact_names_skip(self):
+        d = LlmDetector({"exclude_tools": ["mail-list-folders"]}, ask=FakeModel())
+        self.assertTrue(d.skips("mail-list-folders"))
+        for near in ("mail-list-folder", "Mail-List-Folders", "list-folders", None):
+            with self.subTest(name=near):
+                self.assertFalse(d.skips(near))
+
+
 class FailClosed(unittest.TestCase):
     def test_model_error_propagates(self):
         def broken(text):
