@@ -103,6 +103,55 @@ class ScopingTests(unittest.TestCase):
         self.assertEqual(f.filter_text("abc ABC"), "abc _")
 
 
+SERVER_CFG = {
+    "servers": {"id-mail": "mail", "id-notes": "notes"},
+    "groups": [
+        {"name": "global", "when": None, "rules": [{"search": r"\bAda\b", "replace": "[NAME]"}]},
+        {"name": "mail", "server": "mail", "when": None, "rules": [{"search": r"\bACC-[0-9]+\b", "replace": "[ACCOUNT]"}]},
+        {
+            "name": "mail-shop",
+            "server": "mail",
+            "when": {"from": r"@shop\.example$", "subject": None},
+            "rules": [{"search": r"\bORD-[0-9]+\b", "replace": "[ORDER]"}],
+        },
+        {"name": "notes", "server": "notes", "when": None, "rules": [{"search": r"\bPIN [0-9]{4}\b", "replace": "PIN [PIN]"}]},
+    ],
+}
+SERVER_TEXT = "Ada ACC-12 PIN 1234"
+
+
+class ServerTests(unittest.TestCase):
+    def setUp(self):
+        self.f = ScopedFilter(SERVER_CFG)
+
+    def test_server_groups_add_to_global(self):
+        self.assertEqual(self.f.filter_result(SERVER_TEXT, "id-mail"), "[NAME] [ACCOUNT] PIN 1234")
+        self.assertEqual(self.f.filter_result(SERVER_TEXT, "id-notes"), "[NAME] ACC-12 PIN [PIN]")
+
+    def test_unknown_server_gets_every_group(self):
+        # A wrong or missing id over-filters; it never drops a server's rules.
+        for sid in ("id-other", "unknown", None):
+            with self.subTest(server_id=sid):
+                self.assertEqual(self.f.filter_result(SERVER_TEXT, sid), "[NAME] [ACCOUNT] PIN [PIN]")
+
+    def test_server_and_sender_scopes_combine(self):
+        email = {"from": "x@shop.example", "subject": "s", "body": "ORD-7 ACC-1"}
+        self.assertEqual(self.f.filter_result(email, "id-mail")["body"], "[ORDER] [ACCOUNT]")
+        self.assertEqual(self.f.filter_result(email, "id-notes")["body"], "ORD-7 ACC-1")
+        email["from"] = "x@other.example"
+        self.assertEqual(self.f.filter_result(email, "id-mail")["body"], "ORD-7 [ACCOUNT]")
+
+    def test_json_text_block_keeps_server_scope(self):
+        payload = {"content": [{"type": "text", "text": json.dumps({"from": "a@x.example", "body": SERVER_TEXT})}]}
+        inner = json.loads(self.f.filter_result(payload, "id-notes")["content"][0]["text"])
+        self.assertEqual(inner["body"], "[NAME] ACC-12 PIN [PIN]")
+
+    def test_group_for_undeclared_server_fails_at_load(self):
+        cfg = {"servers": {}, "groups": [{"name": "x", "server": "mail", "when": None, "rules": []}]}
+        with self.assertRaisesRegex(Exception, r"server 'mail' has no id"):
+            ScopedFilter(cfg)
+
+
 class HostExamples(unittest.TestCase):
     """Examples declared next to the host's rules, run through the real
     rendered config. Secret placeholders are replaced by SECRET_ plus the
@@ -115,7 +164,9 @@ class HostExamples(unittest.TestCase):
         examples = json.load(open(os.environ["EXAMPLES"]))
         for ex in examples:
             with self.subTest(group=ex["group"], input=ex["input"]):
-                got = f.filter_text(ex["input"], ex.get("from"), ex.get("subject"))
+                # A server's examples run in that server's context; global
+                # ones in an unknown context, where every group applies.
+                got = f.filter_text(ex["input"], ex.get("from"), ex.get("subject"), ex.get("server"))
                 self.assertEqual(got, ex["expect"])
 
 

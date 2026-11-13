@@ -2,18 +2,24 @@
 # unit-tested in `nix flake check`; scoped_filter.py wraps it as a plugin.
 #
 # Config shape (rendered by contextforge.nix from hosts/<host>/pii/*.nix):
-#   groups: [ { name, when: null | { from: regex|null, subject: regex|null },
+#   groups: [ { name, server: name|null,
+#               when: null | { from: regex|null, subject: regex|null },
 #               rules: [ { search, replace } ] } ]
+#   servers: { <upstream server id>: <name> }  the gateway's ids for the
+#   upstream MCP servers that have their own rule groups.
 #   from_keys / subject_keys: dict keys that identify an email's sender and
 #   subject when a tool returns structured data.
 #
 # Semantics, in order of importance:
-#   1. A group with `when: null` is global and always applies.
-#   2. A scoped group applies to an email whose sender and subject both match
+#   1. A group with `server: null` and `when: null` is global and always
+#      applies.
+#   2. A group with a `server` applies to results from that upstream server.
+#   3. A scoped group applies to an email whose sender and subject both match
 #      its regexes (a missing `from` or `subject` in `when` matches anything).
-#   3. Where no email can be recognised, EVERY group applies. Scoping may add
-#      rules to a known context; it never removes protection from an unknown
-#      one.
+#   4. Where the server or the email can't be recognised, the groups scoped
+#      to it apply as if it matched: an id missing from `servers` gets every
+#      server's groups. Scoping may add rules to a known context; it never
+#      removes protection from an unknown one.
 # Rules within a group, and groups themselves, run in order, each on the
 # output of the previous one.
 import json
@@ -52,6 +58,7 @@ def _compile(search, where):
 class Group:
     def __init__(self, spec):
         self.name = spec.get("name", "?")
+        self.server = spec.get("server")
         when = spec.get("when")
         self.scoped = when is not None
         where = f"group {self.name!r}"
@@ -67,10 +74,12 @@ class Group:
                 raise RuleError(f"{where} rule {i + 1}: replace {r['replace']!r} for {r['search']!r}: {e}") from e
             self.rules.append((pattern, r["replace"]))
 
-    def matches(self, sender, subject):
-        """Only a *known* sender/subject that fails its regex excludes the
+    def matches(self, sender, subject, server=None):
+        """Only a *known* server, sender or subject that fails excludes the
         group; an unknown one (None) never does. That is what makes an
         unrecognised result get every rule."""
+        if self.server is not None and server is not None and self.server != server:
+            return False
         if not self.scoped:
             return True
         if self.when_from is not None and sender is not None and not self.when_from.search(sender):
@@ -103,24 +112,35 @@ def _as_text(value):
 class ScopedFilter:
     def __init__(self, config):
         self.groups = [Group(g) for g in config.get("groups", [])]
+        self.servers = dict(config.get("servers") or {})
+        known = set(self.servers.values())
+        for g in self.groups:
+            if g.server is not None and g.server not in known:
+                raise RuleError(f"group {g.name!r}: server {g.server!r} has no id in `servers`")
         self.from_keys = tuple(config.get("from_keys", DEFAULT_FROM_KEYS))
         self.subject_keys = tuple(config.get("subject_keys", DEFAULT_SUBJECT_KEYS))
 
     # -- public entry points ------------------------------------------------
 
-    def filter_text(self, text, sender=None, subject=None):
+    def server_name(self, server_id):
+        """The configured name for a gateway server id, None if unknown."""
+        return self.servers.get(server_id) if server_id is not None else None
+
+    def filter_text(self, text, sender=None, subject=None, server=None):
         """Apply the groups that match this context (all of them if none)."""
         for group in self.groups:
-            if group.matches(sender, subject):
+            if group.matches(sender, subject, server):
                 text = group.apply(text)
         return text
 
-    def filter_result(self, result):
-        """Scrub a tool result of any shape; returns the same shape."""
+    def filter_result(self, result, server_id=None):
+        """Scrub a tool result of any shape; returns the same shape.
+        `server_id` is the gateway's id of the upstream server it came from."""
+        server = self.server_name(server_id)
         if isinstance(result, str):
-            return self._filter_string(result)
+            return self._filter_string(result, server=server)
         if isinstance(result, (dict, list)):
-            return self._walk(result, sender=None, subject=None)
+            return self._walk(result, sender=None, subject=None, server=server)
         return result
 
     # -- internals ----------------------------------------------------------
@@ -131,7 +151,7 @@ class ScopedFilter:
                 return _as_text(mapping[key])
         return None
 
-    def _walk(self, node, sender, subject):
+    def _walk(self, node, sender, subject, server):
         if isinstance(node, dict):
             # A dict carrying a sender or subject is an email: everything
             # inside it is scoped to that email, including nested parts.
@@ -139,14 +159,14 @@ class ScopedFilter:
             own_subject = self._first(node, self.subject_keys)
             if own_sender is not None or own_subject is not None:
                 sender, subject = own_sender, own_subject
-            return {k: self._walk(v, sender, subject) for k, v in node.items()}
+            return {k: self._walk(v, sender, subject, server) for k, v in node.items()}
         if isinstance(node, list):
-            return [self._walk(v, sender, subject) for v in node]
+            return [self._walk(v, sender, subject, server) for v in node]
         if isinstance(node, str):
-            return self._filter_string(node, sender, subject)
+            return self._filter_string(node, sender, subject, server)
         return node
 
-    def _filter_string(self, text, sender=None, subject=None):
+    def _filter_string(self, text, sender=None, subject=None, server=None):
         # Many MCP servers return JSON as a text block. Scrub it structurally
         # so per-email scoping still works, and write it back the same way.
         stripped = text.lstrip()
@@ -158,11 +178,11 @@ class ScopedFilter:
             if isinstance(parsed, (dict, list)):
                 # Compact, like the JSON MCP servers emit, so the text block
                 # differs from the original only by the replacements.
-                return json.dumps(self._walk(parsed, sender, subject), ensure_ascii=False, separators=(",", ":"))
+                return json.dumps(self._walk(parsed, sender, subject, server), ensure_ascii=False, separators=(",", ":"))
         if sender is None and subject is None:
             # Plain text: an email rendered with header lines, perhaps.
             m = _TEXT_FROM.search(text)
             sender = m.group(1) if m else None
             m = _TEXT_SUBJECT.search(text)
             subject = m.group(1) if m else None
-        return self.filter_text(text, sender, subject)
+        return self.filter_text(text, sender, subject, server)

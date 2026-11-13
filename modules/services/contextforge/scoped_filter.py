@@ -25,7 +25,7 @@ class ScopedFilterPlugin(Plugin):
         self._filter = ScopedFilter(self._config.config or {})
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
-        # A rendered prompt has no sender/subject: every group applies.
+        # A rendered prompt has no sender/subject or server: every group applies.
         if payload.result and payload.result.messages:
             result = copy.deepcopy(payload.result)
             for message in result.messages:
@@ -36,5 +36,9 @@ class ScopedFilterPlugin(Plugin):
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         if payload.result:
-            payload = payload.model_copy(update={"result": self._filter.filter_result(payload.result)})
+            # On tool calls the gateway sets server_id to the *upstream* MCP
+            # server's id (v1.1.0, tool_service._apply_tool_payload_to_global_context),
+            # not the virtual server's: per-server groups follow the upstream.
+            server_id = getattr(context.global_context, "server_id", None)
+            payload = payload.model_copy(update={"result": self._filter.filter_result(payload.result, server_id)})
         return ToolPostInvokeResult(modified_payload=payload)
