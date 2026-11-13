@@ -5,6 +5,8 @@
 #
 # Config (rendered by contextforge.nix):
 #   url, model            Ollama base URL and model name
+#   exclude_tools         tool names that skip the model; every other tool
+#                         goes through it
 #   request_timeout       seconds per Ollama request
 #   num_ctx, keep_alive   passed to Ollama
 #   max_chars             longest text sent in one request; longer units are
@@ -147,6 +149,7 @@ class LlmDetector:
         self.from_keys = tuple(config.get("from_keys", DEFAULT_FROM_KEYS))
         self.subject_keys = tuple(config.get("subject_keys", DEFAULT_SUBJECT_KEYS))
         self.max_chars = int(config.get("max_chars", 12000))
+        self.exclude_tools = frozenset(config.get("exclude_tools") or ())
         self.ask = ask or ollama_ask(
             config["url"],
             config["model"],
@@ -160,6 +163,11 @@ class LlmDetector:
         self._salt = secrets.token_bytes(32)
 
     # -- public ---------------------------------------------------------------
+
+    def skips(self, tool_name):
+        """Exact names only: a near miss runs the model (fail closed), it
+        never skips it."""
+        return tool_name in self.exclude_tools
 
     def scan(self, result, deadline=None):
         """Return `result` with every finding masked. `deadline` is a

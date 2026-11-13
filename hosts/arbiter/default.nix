@@ -39,6 +39,22 @@
   # subject (see CONTEXTFORGE.md). Add a name with ./add-pii.sh.
   homelab.contextforge.rulesDir = ./pii;
 
+  # Upstream MCP servers by their gateway id (admin UI → Gateways). Declaring
+  # one makes it a known server: it gets the global list plus its own, if
+  # any. No Fastmail-only list yet.
+  homelab.contextforge.servers.fastmail.id = "95002935e45f4c67a039d2579cc06b4d";
+
+  # Local model on TEMPLAR as the last filter, for every tool. Fail closed:
+  # while TEMPLAR or its Ollama is unreachable, every tool call fails. The
+  # address must stay TEMPLAR's: reserve it in UniFi, or a new lease breaks
+  # every tool call.
+  homelab.contextforge.llm = {
+    enable = true;
+    url = "http://192.168.1.145:11434";
+    # A personal upload on ollama.com, not the official library; unpinned.
+    model = "oamazonasgabriel/qwen3.6-35b-a3b:q4-24gbGPU";
+  };
+
   homelab.admin = {
     name = "admin";
     sshKeys = [

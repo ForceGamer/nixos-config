@@ -3,7 +3,7 @@
 # call them. Tool results pass through our search-and-replace rules (a global
 # list plus one per upstream server, for names and patterns no generic filter
 # can know), then the regex-based PII filter (hashes e-mails, phone numbers,
-# IBANs, ...), then, for the tools listed in `llm.tools`, a local LLM on
+# IBANs, ...), then, for every tool not in `llm.excludeTools`, a local LLM on
 # another host that looks for anything the first two missed.
 #
 # Two faces, both on this host:
@@ -309,11 +309,11 @@ let
       hooks = [ "tool_post_invoke" ];
       mode = "enforce";
       priority = 60;
-      # Matched against the tool name the client called (the gateway logs it
-      # as "Invoking tool: <name>"). A tool not listed skips the detector.
-      conditions = [ { tools = llm.tools; } ];
+      # No `conditions`: they can only allow-list, and every tool goes through
+      # the model unless excluded. The plugin skips excluded tools itself.
       config = {
         inherit (llm) url model;
+        exclude_tools = llm.excludeTools;
         request_timeout = llm.requestTimeout;
         budget_seconds = llm.timeout;
         num_ctx = llm.numCtx;
@@ -390,13 +390,14 @@ in
         example = "qwen3.6:35b-a3b";
         description = "Ollama model name (must be pulled on the LLM host).";
       };
-      tools = lib.mkOption {
+      excludeTools = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [ ];
         description = ''
-          Tool names whose results go through the model, exactly as the
-          client calls them. Every other tool skips it, and keeps working
-          while the LLM host is off.
+          Tools that skip the model, exactly as the client calls them (the
+          gateway logs each as "Invoking tool: <name>"). Every other tool's
+          result goes through it, so while the LLM host is off every tool
+          not listed here fails.
         '';
       };
       timeout = lib.mkOption {
@@ -467,10 +468,6 @@ in
           in
           lib.length ids == lib.length (lib.unique ids);
         message = "homelab.contextforge.servers: two servers share an id.";
-      }
-      {
-        assertion = !llm.enable || llm.tools != [ ];
-        message = "homelab.contextforge.llm.enable needs at least one tool in llm.tools.";
       }
       {
         assertion = llm.timeout > llm.requestTimeout;
