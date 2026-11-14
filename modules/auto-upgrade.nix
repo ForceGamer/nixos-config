@@ -1,7 +1,7 @@
 { config, self, ... }:
 {
   # Update option (b): rebuild the config that was last deployed (its source is
-  # in the store via `self`) against the newest nixos-26.05 nixpkgs. No repo
+  # in the store via `self`) against the newest nixos-unstable nixpkgs. No repo
   # hosting needed; the running nixpkgs drifts ahead of the committed lock until
   # the next deploy from the workstation.
   system.autoUpgrade = {
@@ -11,7 +11,7 @@
       # Keep in sync with inputs.nixpkgs.url in flake.nix.
       "--override-input"
       "nixpkgs"
-      "github:NixOS/nixpkgs/nixos-26.05"
+      "github:NixOS/nixpkgs/nixos-unstable"
       # The source is a read-only store path.
       "--no-write-lock-file"
     ];

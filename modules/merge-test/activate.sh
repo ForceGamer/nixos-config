@@ -81,6 +81,16 @@ fi
 # Roll back now instead of waiting for the timer. Start the service before
 # stopping its timer: systemd unloads a transient service nothing refers to.
 systemctl start "$unit.service" || true
+# When the rollback changes systemd or system.conf, switch-to-configuration
+# re-executes systemd, which drops systemctl's connection and returns while
+# the rollback still runs. Wait on the unit itself (empty: the bus is gone
+# for a moment), so the next run never meets a half-finished rollback.
+for _ in $(seq 600); do
+  case $(systemctl show -P ActiveState "$unit.service" 2>/dev/null) in
+    activating | deactivating | "") sleep 1 ;;
+    *) break ;;
+  esac
+done
 systemctl stop "$unit.timer" || true
 echo "rolled back: $(IFS=';'; echo "${reasons[*]}")"
 exit 1

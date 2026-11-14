@@ -5,9 +5,7 @@
   i18n.defaultLocale = "en_GB.UTF-8";
   console.keyMap = "no";
 
-  services.journald.extraConfig = ''
-    SystemMaxUse=1G
-  '';
+  services.journald.settings.Journal.SystemMaxUse = "1G";
 
   # Drop the implicit defaults (perl, rsync, strace, ...) so everything on the
   # system is listed here on purpose.

@@ -33,6 +33,8 @@ pkgs.testers.runNixOSTest {
     };
 
   testScript = ''
+    from datetime import timedelta
+
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("sshd.service")
 
@@ -67,7 +69,7 @@ pkgs.testers.runNixOSTest {
         assert current() == spec["good"]
         machine.fail("systemctl is-active merge-test-revert.timer")
         # Past the rollback deadline: nothing reverts it.
-        machine.sleep(40)
+        machine.sleep(timedelta(seconds=40))
         assert current() == spec["good"]
         back_to_base()
 
@@ -82,6 +84,9 @@ pkgs.testers.runNixOSTest {
         out = machine.fail(f"{env} merge-test-activate {spec['no-ssh']}")
         assert "sshd.service is not active" in out, out
         assert current() == base
+        # This rollback re-executes systemd mid-way; the script must still
+        # wait for it to finish.
+        machine.fail("systemctl is-active merge-test-revert.service")
         machine.wait_for_unit("sshd.service")
 
     with subtest("a failing check rolls back"):
@@ -93,7 +98,7 @@ pkgs.testers.runNixOSTest {
         # Killed while its check hangs, the way a lost network would leave it.
         machine.fail(f"{env} timeout 15 merge-test-activate {spec['good']} sleep 600")
         assert current() == spec["good"]
-        machine.wait_until_succeeds(f'[ "$(readlink -f /run/current-system)" = {base} ]', timeout=90)
+        machine.wait_until_succeeds(f'[ "$(readlink -f /run/current-system)" = {base} ]', timeout=timedelta(seconds=90))
         machine.wait_for_unit("sshd.service")
   '';
 }
