@@ -7,7 +7,7 @@ import re
 import tempfile
 import unittest
 
-from detectors_core import URL
+from detectors_core import URL, Detectors
 from pseudonym_core import Pseudonymizer, Store
 from scoped_filter_core import ScopedFilter
 
@@ -295,6 +295,46 @@ class UrlFixtures(unittest.TestCase):
     def test_token_rule_still_applies_in_urls(self):
         out = ScopedFilter(PIPE_CFG, Pseudonymizer(KEY)).filter_text(URL_FIXTURES[4])
         self.assertEqual(out, "https://tracking.example/c/[TOKEN]")
+
+
+class HostPhoneFormats(unittest.TestCase):
+    """The host's real detector config (flake check only): phone formats
+    seen in mail are masked; digit groups that aren't phone numbers stay."""
+
+    NBSP = "\u00a0"
+    MASKED = [
+        "\nKontakt: 12 34 56 78\n",
+        "Tlf. 22 33 44 55.",
+        "tlf:22 33 44 55",
+        "(22 33 44 55)",
+        f"12{NBSP}34{NBSP}56{NBSP}78",
+        "+47 12 34 56 78",
+        f"+47{NBSP}912{NBSP}34{NBSP}567",
+        f"412{NBSP}34{NBSP}567",
+        "Ring 91234567",
+        "0047 41234567",
+    ]
+    KEPT = ["Org.nr 912 345 678", "12 34 56 78 90", "Kontonr 1234 56 78903", "kl. 12 34", "2026 11 14", "1 22 33 44 55"]
+
+    def detectors(self):
+        if "CONFIG" not in os.environ:
+            self.skipTest("no rendered config given")
+        with open(os.environ["CONFIG"]) as fh:
+            return Detectors(json.load(fh)["detectors"], Pseudonymizer(KEY))
+
+    def test_masked(self):
+        d = self.detectors()
+        for text in self.MASKED:
+            with self.subTest(text=text):
+                out = d.apply(text)
+                self.assertRegex(out, HASH)
+                self.assertNotRegex(re.sub(HASH, "", out), r"\d{2}[ \u00a0]?\d{2}")
+
+    def test_kept(self):
+        d = self.detectors()
+        for text in self.KEPT:
+            with self.subTest(text=text):
+                self.assertEqual(d.apply(text), text)
 
 
 class HostExamples(unittest.TestCase):

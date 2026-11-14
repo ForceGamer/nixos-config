@@ -14,7 +14,9 @@ CONFIG = {
         {"name": "no-id", "pattern": r"\b(?:[04][1-9]|[1256]\d|[37][01])(?:0[1-9]|1[0-2])\d{2} ?\d{5}\b", "label": "HASH", "urls": False},
         {
             "name": "no-phone",
-            "pattern": r"(?<![\w+])(?:\+|00)47 ?(?:\d{2} ?\d{2} ?\d{2} ?\d{2}|\d{3} ?\d{2} ?\d{3})\b|\b[49]\d{7}\b|\b[49]\d{2} \d{2} \d{3}\b",
+            "pattern": r"(?<![\w+])(?:\+|00)47[  ]?(?:\d{2}[  ]?\d{2}[  ]?\d{2}[  ]?\d{2}|\d{3}[  ]?\d{2}[  ]?\d{3})\b"
+            r"|\b[49]\d{7}\b|\b[49]\d{2}[  ]\d{2}[  ]\d{3}\b"
+            r"|(?<!\d)(?<!\d )(?<!\d )\d{2}[  ]\d{2}[  ]\d{2}[  ]\d{2}(?![  ]?\d)",
             "label": "HASH",
             "urls": False,
         },
@@ -89,6 +91,10 @@ class Numbers(unittest.TestCase):
     def test_norwegian_phone_and_id(self):
         out = det().apply("Ring +47 912 34 567 eller 91234567. Fnr 01019012345.")
         self.assertRegex(out, rf"^Ring {HASH} eller {HASH}\. Fnr {HASH}\.$")
+
+    def test_norwegian_phone_2222_without_prefix(self):
+        self.assertRegex(det().apply("\nKontakt: 12 34 56 78\n"), rf"^\nKontakt: {HASH}\n$")
+        self.assertEqual(det().apply("12 34 56 78 90"), "12 34 56 78 90")
 
     def test_account_label_kept(self):
         self.assertRegex(det().apply("Account number 12345678901"), rf"^Account number {HASH}$")
