@@ -1,0 +1,12 @@
+# Organisations: e-mail addresses at these domains (and their subdomains,
+# e.g. notifications.github.com) stay readable in tool results, for every
+# server. Own domains are hashed regardless (homelab.contextforge.ownDomains
+# and ownDomainSecrets). One domain per line.
+prisjakt.no
+anthropic.com
+github.com
+domeneshop.no
+gnosispay.com
+raindrop.io
+neon.tech
+selfh.st

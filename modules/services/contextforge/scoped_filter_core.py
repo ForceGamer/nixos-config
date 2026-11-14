@@ -4,9 +4,15 @@
 # Config shape (rendered by contextforge.nix from hosts/<host>/pii/*.nix):
 #   groups: [ { name, server: name|null,
 #               when: null | { from: regex|null, subject: regex|null },
-#               rules: [ { search, replace } ] } ]
+#               rules: [ { search, replace, urls, literal } ] } ]
+#     urls: false = the rule never touches text inside a URL (numbers,
+#     amounts); literal: true = a sops-secret rule (a name, a place).
 #   servers: { <upstream server id>: <name> }  the gateway's ids for the
 #   upstream MCP servers that have their own rule groups.
+#   detectors: config for detectors_core (e-mail, phone, IP, ...), run after
+#   the groups. Needs a Pseudonymizer; omitted, only the rules run.
+#   literal_keys: dict keys whose values get literal rules only, never the
+#   generic rules or detectors (Message-IDs: hashing one breaks threading).
 #   from_keys / subject_keys: dict keys that identify an email's sender and
 #   subject when a tool returns structured data.
 #
@@ -25,8 +31,14 @@
 import json
 import re
 
+try:
+    from .detectors_core import URL, Detectors
+except ImportError:  # run flat, by the unit tests
+    from detectors_core import URL, Detectors
+
 DEFAULT_FROM_KEYS = ("from", "sender", "From", "Sender")
 DEFAULT_SUBJECT_KEYS = ("subject", "Subject")
+DEFAULT_LITERAL_KEYS = ("messageId", "inReplyTo", "references")
 
 # Plain-text results: "From: ..." / "Subject: ..." lines (RFC 822 style, or a
 # markdown rendering of them).
@@ -72,7 +84,7 @@ class Group:
                 pattern.sub(r["replace"], "probe")
             except re.error as e:
                 raise RuleError(f"{where} rule {i + 1}: replace {r['replace']!r} for {r['search']!r}: {e}") from e
-            self.rules.append((pattern, r["replace"]))
+            self.rules.append((pattern, r["replace"], r.get("urls", True), r.get("literal", False)))
 
     def matches(self, sender, subject, server=None):
         """Only a *known* server, sender or subject that fails excludes the
@@ -88,10 +100,27 @@ class Group:
             return False
         return True
 
-    def apply(self, text):
-        for pattern, replace in self.rules:
-            text = pattern.sub(replace, text)
+    def apply(self, text, literal_only=False):
+        for pattern, replace, urls, literal in self.rules:
+            if literal_only and not literal:
+                continue
+            if urls:
+                text = pattern.sub(replace, text)
+            else:
+                text = outside_urls(text, lambda t: pattern.sub(replace, t))
         return text
+
+
+def outside_urls(text, fn):
+    """Apply fn to the parts of text that aren't URLs (found afresh, since
+    an earlier rule may have changed them)."""
+    out, cursor = [], 0
+    for m in URL.finditer(text):
+        out.append(fn(text[cursor : m.start()]))
+        out.append(m.group(0))
+        cursor = m.end()
+    out.append(fn(text[cursor:]))
+    return "".join(out)
 
 
 def _as_text(value):
@@ -110,8 +139,15 @@ def _as_text(value):
 
 
 class ScopedFilter:
-    def __init__(self, config):
+    def __init__(self, config, pseudonymizer=None):
         self.groups = [Group(g) for g in config.get("groups", [])]
+        if config.get("detectors") is not None:
+            if pseudonymizer is None:
+                raise RuleError("detectors configured but no pseudonymizer given")
+            self.detectors = Detectors(config["detectors"], pseudonymizer)
+        else:
+            self.detectors = None
+        self.literal_keys = frozenset(config.get("literal_keys", DEFAULT_LITERAL_KEYS))
         self.servers = dict(config.get("servers") or {})
         known = set(self.servers.values())
         for g in self.groups:
@@ -126,21 +162,25 @@ class ScopedFilter:
         """The configured name for a gateway server id, None if unknown."""
         return self.servers.get(server_id) if server_id is not None else None
 
-    def filter_text(self, text, sender=None, subject=None, server=None):
-        """Apply the groups that match this context (all of them if none)."""
+    def filter_text(self, text, sender=None, subject=None, server=None, literal_only=False, counts=None):
+        """Apply the groups that match this context (all of them if none),
+        then the detectors."""
         for group in self.groups:
             if group.matches(sender, subject, server):
-                text = group.apply(text)
+                text = group.apply(text, literal_only)
+        if self.detectors is not None and not literal_only:
+            text = self.detectors.apply(text, counts)
         return text
 
-    def filter_result(self, result, server_id=None):
+    def filter_result(self, result, server_id=None, counts=None):
         """Scrub a tool result of any shape; returns the same shape.
-        `server_id` is the gateway's id of the upstream server it came from."""
-        server = self.server_name(server_id)
+        `server_id` is the gateway's id of the upstream server it came from.
+        `counts` collects detections per kind, for logging."""
+        ctx = {"server": self.server_name(server_id), "counts": counts}
         if isinstance(result, str):
-            return self._filter_string(result, server=server)
+            return self._filter_string(result, None, None, ctx)
         if isinstance(result, (dict, list)):
-            return self._walk(result, sender=None, subject=None, server=server)
+            return self._walk(result, None, None, ctx)
         return result
 
     # -- internals ----------------------------------------------------------
@@ -151,7 +191,7 @@ class ScopedFilter:
                 return _as_text(mapping[key])
         return None
 
-    def _walk(self, node, sender, subject, server):
+    def _walk(self, node, sender, subject, ctx, literal_only=False):
         if isinstance(node, dict):
             # A dict carrying a sender or subject is an email: everything
             # inside it is scoped to that email, including nested parts.
@@ -159,14 +199,16 @@ class ScopedFilter:
             own_subject = self._first(node, self.subject_keys)
             if own_sender is not None or own_subject is not None:
                 sender, subject = own_sender, own_subject
-            return {k: self._walk(v, sender, subject, server) for k, v in node.items()}
+            return {
+                k: self._walk(v, sender, subject, ctx, literal_only or k in self.literal_keys) for k, v in node.items()
+            }
         if isinstance(node, list):
-            return [self._walk(v, sender, subject, server) for v in node]
+            return [self._walk(v, sender, subject, ctx, literal_only) for v in node]
         if isinstance(node, str):
-            return self._filter_string(node, sender, subject, server)
+            return self._filter_string(node, sender, subject, ctx, literal_only)
         return node
 
-    def _filter_string(self, text, sender=None, subject=None, server=None):
+    def _filter_string(self, text, sender, subject, ctx, literal_only=False):
         # Many MCP servers return JSON as a text block. Scrub it structurally
         # so per-email scoping still works, and write it back the same way.
         stripped = text.lstrip()
@@ -178,11 +220,11 @@ class ScopedFilter:
             if isinstance(parsed, (dict, list)):
                 # Compact, like the JSON MCP servers emit, so the text block
                 # differs from the original only by the replacements.
-                return json.dumps(self._walk(parsed, sender, subject, server), ensure_ascii=False, separators=(",", ":"))
+                return json.dumps(self._walk(parsed, sender, subject, ctx, literal_only), ensure_ascii=False, separators=(",", ":"))
         if sender is None and subject is None:
             # Plain text: an email rendered with header lines, perhaps.
             m = _TEXT_FROM.search(text)
             sender = m.group(1) if m else None
             m = _TEXT_SUBJECT.search(text)
             subject = m.group(1) if m else None
-        return self.filter_text(text, sender, subject, server)
+        return self.filter_text(text, sender, subject, ctx["server"], literal_only, ctx["counts"])

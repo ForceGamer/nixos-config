@@ -6,7 +6,14 @@ import threading
 import time
 import unittest
 
-from llm_detector_core import LlmDetector, LlmError
+from llm_detector_core import SYSTEM, LlmDetector, LlmError, known_values, system_prompt
+from pseudonym_core import Pseudonymizer
+
+KEY = b"k" * 32
+
+
+def P():
+    return Pseudonymizer(KEY)
 
 
 class FakeModel:
@@ -34,7 +41,7 @@ def tool_result(obj):
 class Units(unittest.TestCase):
     def test_one_request_per_email_not_the_raw_json(self):
         model = FakeModel()
-        LlmDetector({}, ask=model).scan(tool_result(emails("first body", "second body")))
+        LlmDetector({}, P(), ask=model).scan(tool_result(emails("first body", "second body")))
         self.assertEqual(len(model.requests), 2)
         for req in model.requests:
             self.assertNotIn("{", req)
@@ -45,18 +52,18 @@ class Units(unittest.TestCase):
     def test_duplicate_copy_of_an_email_is_asked_once(self):
         # content[0].text and structuredContent carry the same emails.
         model = FakeModel()
-        LlmDetector({}, ask=model).scan(tool_result(emails("same")))
+        LlmDetector({}, P(), ask=model).scan(tool_result(emails("same")))
         self.assertEqual(len(model.requests), 1)
 
     def test_text_outside_emails_is_one_unit(self):
         model = FakeModel()
-        LlmDetector({}, ask=model).scan({"content": [{"type": "text", "text": "Note for Kari Nordmann"}], "isError": False})
+        LlmDetector({}, P(), ask=model).scan({"content": [{"type": "text", "text": "Note for Kari Nordmann"}], "isError": False})
         self.assertEqual(model.requests, ["content.text: Note for Kari Nordmann"])
 
     def test_long_unit_is_split_not_truncated(self):
         model = FakeModel("Kari Nordmann")
         body = ("word " * 50 + "\n") * 40 + "signed Kari Nordmann"
-        out = LlmDetector({"max_chars": 600}, ask=model).scan({"from": "a", "subject": "s", "body": body})
+        out = LlmDetector({"max_chars": 600}, P(), ask=model).scan({"from": "a", "subject": "s", "body": body})
         self.assertGreater(len(model.requests), 1)
         self.assertTrue(all(len(r) <= 600 for r in model.requests))
         self.assertNotIn("Kari", out["body"])
@@ -64,11 +71,11 @@ class Units(unittest.TestCase):
 
 class Masking(unittest.TestCase):
     def test_finding_masked_consistently(self):
-        d = LlmDetector({}, ask=FakeModel("Kari Nordmann"))
+        d = LlmDetector({}, P(), ask=FakeModel("Kari Nordmann"))
         out = d.scan(tool_result(emails("Hi Kari Nordmann", "KARI NORDMANN again")))
         res = out["structuredContent"]["results"]
         self.assertNotIn("Kari", json.dumps(out))
-        self.assertRegex(res[0]["preview"], r"^Hi \[PII:[0-9a-f]{12}\]$")
+        self.assertRegex(res[0]["preview"], r"^Hi \[PII:[0-9a-f]{16}\]$")
         self.assertEqual(res[0]["preview"][3:], res[1]["preview"][:-6])
         self.assertEqual(json.loads(out["content"][0]["text"]), out["structuredContent"])
 
@@ -78,16 +85,16 @@ class Masking(unittest.TestCase):
             def __call__(self, text):
                 return [("Bergen", "address")] if "Storgata" in text else []
 
-        out = LlmDetector({}, ask=OnlyFirst()).scan(emails("Storgata 1, Bergen", "Flight to Bergen"))
+        out = LlmDetector({}, P(), ask=OnlyFirst()).scan(emails("Storgata 1, Bergen", "Flight to Bergen"))
         self.assertNotIn("Bergen", out["results"][0]["preview"])
         self.assertEqual(out["results"][1]["preview"], "Flight to Bergen")
 
     def test_whole_words_only(self):
-        out = LlmDetector({}, ask=FakeModel("Ann")).scan({"from": "a", "subject": "s", "body": "Ann sent the Annual report"})
+        out = LlmDetector({}, P(), ask=FakeModel("Ann")).scan({"from": "a", "subject": "s", "body": "Ann sent the Annual report"})
         self.assertRegex(out["body"], r"^\[PII:[0-9a-f]+\] sent the Annual report$")
 
     def test_ids_and_structure_untouched(self):
-        out = LlmDetector({}, ask=FakeModel("M0", "Hi")).scan(emails("x"))
+        out = LlmDetector({}, P(), ask=FakeModel("M0", "Hi")).scan(emails("x"))
         self.assertEqual(out["results"][0]["id"], "M0")
 
     def test_unusable_findings_ignored(self):
@@ -96,27 +103,65 @@ class Masking(unittest.TestCase):
                 return [("ab", "other"), ("[HASH:00]", "email"), ("[ORDER]", "id"), ("Not in text", "name"), ("preview", "other"), ("...", "other")]
 
         body = {"from": "a", "subject": "s", "preview": "ab [HASH:00] [ORDER]"}
-        self.assertEqual(LlmDetector({}, ask=Noisy()).scan(dict(body)), body)
+        self.assertEqual(LlmDetector({}, P(), ask=Noisy()).scan(dict(body)), body)
 
     def test_longest_finding_first(self):
-        out = LlmDetector({}, ask=FakeModel("Kari", "Kari Nordmann")).scan({"from": "a", "subject": "s", "b": "Kari Nordmann"})
+        out = LlmDetector({}, P(), ask=FakeModel("Kari", "Kari Nordmann")).scan({"from": "a", "subject": "s", "b": "Kari Nordmann"})
         self.assertRegex(out["b"], r"^\[PII:[0-9a-f]+\]$")
 
     def test_plain_string_result(self):
-        out = LlmDetector({}, ask=FakeModel("Kari")).scan("From: x\nHi Kari")
+        out = LlmDetector({}, P(), ask=FakeModel("Kari")).scan("From: x\nHi Kari")
         self.assertRegex(out, r"Hi \[PII:")
 
 
 class Exclusion(unittest.TestCase):
     def test_every_tool_by_default(self):
-        self.assertFalse(LlmDetector({}, ask=FakeModel()).skips("mail-search"))
+        self.assertFalse(LlmDetector({}, P(), ask=FakeModel()).skips("mail-search"))
 
     def test_only_exact_names_skip(self):
-        d = LlmDetector({"exclude_tools": ["mail-list-folders"]}, ask=FakeModel())
+        d = LlmDetector({"exclude_tools": ["mail-list-folders"]}, P(), ask=FakeModel())
         self.assertTrue(d.skips("mail-list-folders"))
         for near in ("mail-list-folder", "Mail-List-Folders", "list-folders", None):
             with self.subTest(name=near):
                 self.assertFalse(d.skips(near))
+
+
+class OwnValuesAndPrompt(unittest.TestCase):
+    def test_known_values_unescaped_into_the_prompt(self):
+        # Stored regex-escaped by add-pii.sh.
+        known = known_values([r"Kari Nordmann", r"St\. Olav skole", r"Kari Nordmann", "x"])
+        self.assertEqual(known, ["Kari Nordmann", "St. Olav skole"])
+        prompt = system_prompt(known)
+        self.assertIn("- St. Olav skole", prompt)
+        self.assertIn("names of other people", prompt)
+        self.assertIn("places tied to the user", prompt)
+
+    def test_own_value_masked_even_when_glued(self):
+        d = LlmDetector({"known_values": ["Kari Nordmann"]}, P(), ask=FakeModel("Kari Nordmann", kind="own"))
+        out = d.scan({"from": "a", "subject": "s", "b": "Customer NameKari NordmannInvoice 12"})
+        self.assertRegex(out["b"], r"^Customer Name\[PII:[0-9a-f]{16}\]Invoice 12$")
+
+    def test_other_findings_stay_whole_word(self):
+        d = LlmDetector({"known_values": ["Kari Nordmann"]}, P(), ask=FakeModel("Storgata"))
+        out = d.scan({"from": "a", "subject": "s", "b": "Storgata 1, Storgatan 2"})
+        self.assertRegex(out["b"], r"^\[PII:[0-9a-f]{16}\] 1, Storgatan 2$")
+
+    def test_rule_placeholders_not_sent(self):
+        model = FakeModel()
+        LlmDetector({}, P(), ask=model).scan(
+            {"from": "[HASH:0123456789abcdef]", "subject": "Order [ORDER] for [NAME]", "b": "[AMOUNT]"}
+        )
+        self.assertEqual(model.requests, ["subject: Order   for  "])
+
+    def test_same_finding_same_mask_across_instances(self):
+        a = LlmDetector({}, P(), ask=FakeModel("Storgata 1")).scan({"from": "a", "subject": "s", "b": "Storgata 1"})
+        b = LlmDetector({}, P(), ask=FakeModel("Storgata 1")).scan({"from": "a", "subject": "s", "b": "Storgata 1"})
+        self.assertEqual(a, b)
+
+    def test_masks_are_recorded(self):
+        p = P()
+        LlmDetector({}, p, ask=FakeModel("Storgata 1")).scan({"from": "a", "subject": "s", "b": "Storgata 1"})
+        self.assertEqual(list(p._pending.values()), ["Storgata 1"])
 
 
 class FailClosed(unittest.TestCase):
@@ -125,12 +170,12 @@ class FailClosed(unittest.TestCase):
             raise LlmError("down")
 
         with self.assertRaises(LlmError):
-            LlmDetector({}, ask=broken).scan(emails("x"))
+            LlmDetector({}, P(), ask=broken).scan(emails("x"))
 
     def test_deadline_stops_further_requests(self):
         model = FakeModel()
         with self.assertRaisesRegex(LlmError, "out of time"):
-            LlmDetector({}, ask=model).scan(emails("a", "b"), deadline=time.monotonic() - 1)
+            LlmDetector({}, P(), ask=model).scan(emails("a", "b"), deadline=time.monotonic() - 1)
         self.assertEqual(model.requests, [])
 
 
@@ -170,7 +215,7 @@ class OllamaClient(unittest.TestCase):
         FakeOllama.seen = []
 
     def detector(self, **extra):
-        return LlmDetector({"url": self.url, "model": "m:1", "request_timeout": 1, **extra})
+        return LlmDetector({"url": self.url, "model": "m:1", "request_timeout": 1, **extra}, P())
 
     def answer(self, content):
         FakeOllama.reply = {"message": {"role": "assistant", "content": content}, "done": True}
@@ -201,7 +246,7 @@ class OllamaClient(unittest.TestCase):
             self.detector().scan({"from": "a", "subject": "s", "b": "x"})
 
     def test_unreachable_fails(self):
-        d = LlmDetector({"url": "http://127.0.0.1:9", "model": "m", "request_timeout": 1})
+        d = LlmDetector({"url": "http://127.0.0.1:9", "model": "m", "request_timeout": 1}, P())
         with self.assertRaises(LlmError):
             d.scan({"from": "a", "subject": "s", "b": "x"})
 

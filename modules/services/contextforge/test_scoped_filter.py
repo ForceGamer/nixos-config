@@ -3,9 +3,16 @@
 # ($CONFIG). Run by `nix flake check`. All data here is synthetic.
 import json
 import os
+import re
+import tempfile
 import unittest
 
+from detectors_core import URL
+from pseudonym_core import Pseudonymizer, Store
 from scoped_filter_core import ScopedFilter
+
+KEY = b"k" * 32
+HASH = r"\[HASH:[0-9a-f]{16}\]"
 
 CFG = {
     "groups": [
@@ -152,6 +159,144 @@ class ServerTests(unittest.TestCase):
             ScopedFilter(cfg)
 
 
+DETECTORS = {
+    "own_domains": ["mine.example"],
+    "allow_domains": ["github.com"],
+    "custom_patterns": [
+        {"name": "no-phone", "pattern": r"\b[49]\d{7}\b", "label": "HASH", "urls": False},
+    ],
+}
+PIPE_CFG = {
+    "detectors": DETECTORS,
+    "groups": [
+        {"name": "people", "when": None, "rules": [{"search": r"\bAda Lovelace\b", "replace": "[NAME]", "literal": True}]},
+        {
+            "name": "money",
+            "when": None,
+            "rules": [{"search": r"[0-9]+\s?kr", "replace": "[AMOUNT]", "urls": False}],
+        },
+        {
+            "name": "links",
+            "when": None,
+            "rules": [{"search": r"(https?://[^\s]*/c/)[A-Za-z0-9_-]{40,}", "replace": r"\1[TOKEN]"}],
+        },
+        {"name": "uuid", "when": None, "rules": [{"search": r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", "replace": "[UUID]"}]},
+    ],
+}
+EMAIL = {
+    "id": "M1",
+    "messageId": ["<ada.lovelace.91234567@mail.mine.example>"],
+    "from": [{"name": "Ada Lovelace", "email": "ada@example.org"}],
+    "to": [{"name": "Me", "email": "me@mine.example"}],
+    "subject": "Order 499 kr",
+    "preview": "Call me on 91234567. Paid 499 kr. https://help.example.com/articles/41234567-why-499kr",
+}
+
+
+def result(email):
+    obj = {"results": [email]}
+    return {"content": [{"type": "text", "text": json.dumps(obj)}], "structuredContent": obj, "isError": False}
+
+
+class Pipeline(unittest.TestCase):
+    """Rules, then detectors, as the plugin runs them."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, "p.db")
+        self.stores = []
+
+    def tearDown(self):
+        for s in self.stores:
+            s.close()
+        self.dir.cleanup()
+
+    def fresh(self):
+        # What a gateway restart amounts to: new instances, same key and file.
+        self.stores.append(Store(self.path))
+        return ScopedFilter(PIPE_CFG, Pseudonymizer(KEY, self.stores[-1]))
+
+    def test_deterministic_across_calls_and_restart(self):
+        f = self.fresh()
+        first = json.dumps(f.filter_result(result(EMAIL), "srv"), sort_keys=True)
+        second = json.dumps(f.filter_result(result(EMAIL), "srv"), sort_keys=True)
+        after_restart = json.dumps(self.fresh().filter_result(result(EMAIL), "srv"), sort_keys=True)
+        self.assertEqual(first, second)
+        self.assertEqual(first, after_restart)
+        self.assertRegex(first, HASH)
+
+    def test_search_and_read_agree(self):
+        # The same sender in a search result and in a single-email read.
+        f = self.fresh()
+        search = f.filter_result(result(EMAIL))["structuredContent"]["results"][0]["from"][0]["email"]
+        read = self.fresh().filter_result(json.dumps(EMAIL))
+        self.assertIn(search, read)
+
+    def test_message_id_gets_literal_rules_only(self):
+        out = self.fresh().filter_result(EMAIL)
+        self.assertEqual(out["messageId"], ["<ada.lovelace.91234567@mail.mine.example>"])
+        cfg = json.loads(json.dumps(PIPE_CFG))
+        cfg["groups"][0]["rules"][0]["search"] = r"ada\.lovelace"
+        out = ScopedFilter(cfg, Pseudonymizer(KEY)).filter_result(EMAIL)
+        self.assertEqual(out["messageId"], ["<[NAME].91234567@mail.mine.example>"])
+
+    def test_allowlist_and_own_address(self):
+        email = dict(EMAIL, **{"from": [{"name": "GitHub", "email": "noreply@github.com"}]})
+        out = self.fresh().filter_result(email)
+        self.assertEqual(out["from"][0]["email"], "noreply@github.com")
+        self.assertRegex(out["to"][0]["email"], f"^{HASH}$")
+        self.assertRegex(self.fresh().filter_text("support@mine.example"), f"^{HASH}$")
+
+    def test_detectors_need_a_pseudonymizer(self):
+        with self.assertRaisesRegex(Exception, "pseudonymizer"):
+            ScopedFilter(PIPE_CFG)
+
+
+# Synthetic URLs shaped like the false positives seen in operation: a
+# tracking token with digits and "kr" in it, an article slug with an 8-digit
+# id, numbers in query strings, a card-shaped path, a long tracking token.
+URL_FIXTURES = [
+    "https://click.mail.example/ls/click?upn=u001.AbC49krBfqqhTNGuVuXX_d0a1b2c3d4e5f6g7h8i9j0kLmNoPqRsTuV-WxYz",
+    "https://help.example.com/hc/en-us/articles/41234567-what-is-happening-to-my-order",
+    "https://shop.example/p/kr1299?qty=2&tel=91234567&amount=49kr",
+    "https://pay.example/r/4111111111111111/receipt",
+    "https://tracking.example/c/AbCdEfGh1234567890IjKlMnOpQrStUvWxYz0123456789",
+    "https://news.example/2026/11/14/99-kr-deals-12345678901234567",
+]
+# Inside a URL these may appear only where a URL rule put them.
+NUMERIC_TAGS = re.compile(r"\[(?:AMOUNT|CRYPTO_AMOUNT|LONG_ID|ORDER|ORDER_ID|VOUCHER|CUSTOMER_NO)\]|\[HASH:")
+
+
+class UrlFixtures(unittest.TestCase):
+    """No number, amount or phone tags inside URLs, with the synthetic
+    pipeline and, in the flake check, with the host's real rules."""
+
+    def filters(self):
+        yield "synthetic", ScopedFilter(PIPE_CFG, Pseudonymizer(KEY))
+        if "CONFIG" in os.environ:
+            with open(os.environ["CONFIG"]) as fh:
+                yield "host rules", ScopedFilter(json.load(fh), Pseudonymizer(KEY))
+
+    def test_no_numeric_tags_inside_urls(self):
+        for name, f in self.filters():
+            for url in URL_FIXTURES:
+                text = f"Total 499 kr, ring 91234567: {url} . Kort 4111 1111 1111 1111."
+                with self.subTest(rules=name, url=url):
+                    out = f.filter_text(text)
+                    urls = URL.findall(out)
+                    self.assertEqual(len(urls), 1, out)
+                    self.assertIsNone(NUMERIC_TAGS.search(urls[0]), urls[0])
+                    # Outside the URL the same rules still work.
+                    outside = out.replace(urls[0], "")
+                    self.assertNotIn("91234567", outside)
+                    self.assertNotIn("4111 1111", outside)
+                    self.assertNotIn("499", outside)
+
+    def test_token_rule_still_applies_in_urls(self):
+        out = ScopedFilter(PIPE_CFG, Pseudonymizer(KEY)).filter_text(URL_FIXTURES[4])
+        self.assertEqual(out, "https://tracking.example/c/[TOKEN]")
+
+
 class HostExamples(unittest.TestCase):
     """Examples declared next to the host's rules, run through the real
     rendered config. Secret placeholders are replaced by SECRET_ plus the
@@ -160,8 +305,13 @@ class HostExamples(unittest.TestCase):
     def test_examples(self):
         if "CONFIG" not in os.environ:
             self.skipTest("no rendered config given")
-        f = ScopedFilter(json.load(open(os.environ["CONFIG"])))
-        examples = json.load(open(os.environ["EXAMPLES"]))
+        with open(os.environ["CONFIG"]) as fh:
+            config = json.load(fh)
+        # Examples document the rules; the detectors have their own tests.
+        config.pop("detectors", None)
+        f = ScopedFilter(config)
+        with open(os.environ["EXAMPLES"]) as fh:
+            examples = json.load(fh)
         for ex in examples:
             with self.subTest(group=ex["group"], input=ex["input"]):
                 # A server's examples run in that server's context; global

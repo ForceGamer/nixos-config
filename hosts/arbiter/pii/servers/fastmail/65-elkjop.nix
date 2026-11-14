@@ -1,6 +1,6 @@
 # Elkjøp receipts: a survey link whose parameters identify the purchase and
 # the customer, a streaming voucher code (a value in itself), and 8-digit
-# order numbers that start with 4 or 9, which the PII filter would otherwise
+# order numbers that start with 4 or 9, which the phone detector would otherwise
 # hash as Norwegian phone numbers.
 {
   name = "elkjop";
