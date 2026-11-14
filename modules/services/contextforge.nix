@@ -1,10 +1,13 @@
 # ContextForge (IBM's MCP gateway) as a PII-scrubbing proxy between MCP
 # servers that return personal data (mail, notes, ...) and the AI clients that
-# call them. Tool results pass through our search-and-replace rules (a global
-# list plus one per upstream server, for names and patterns no generic filter
-# can know), then the regex-based PII filter (hashes e-mails, phone numbers,
-# IBANs, ...), then, for every tool not in `llm.excludeTools`, a local LLM on
-# another host that looks for anything the first two missed.
+# call them. Tool results pass through our rule layer: search-and-replace
+# rules (a global list plus one per upstream server, for names and patterns no
+# generic filter can know), then detectors for e-mails, phone numbers, IBANs,
+# IP addresses, ... that replace each value with a stable pseudonym; then, for
+# every tool not in `llm.excludeTools`, a local LLM on another host that looks
+# for anything the rule layer missed. Pseudonyms are keyed (HMAC, sops key),
+# so they're the same across calls and restarts, and recorded, so a tool
+# argument can carry one back to the upstream server.
 #
 # Two faces, both on this host:
 #   https://mcp-admin.<domain>        LAN and WireGuard only (admin UI and API).
@@ -38,14 +41,37 @@ let
   secret = name: config.sops.secrets."contextforge/${name}";
   placeholder = name: config.sops.placeholder."contextforge/${name}";
 
-  # Plugin pipeline. Only *post* hooks: the AI's own inputs need no scrubbing,
-  # and masking tool arguments would break lookups (e.g. search by sender).
-  # Resources have no PII hook in these plugins, so virtual servers must expose
-  # tools only (see CONTEXTFORGE.md).
+  # Plugin pipeline. The post hooks scrub; the one pre hook does the reverse,
+  # replacing known pseudonyms in tool arguments with the originals, so the AI
+  # can search by or reply to a sender it only knows as [HASH:…]. Resources
+  # have no PII hook in these plugins, so virtual servers must expose tools
+  # only (see CONTEXTFORGE.md).
   postHooks = [
     "tool_post_invoke"
     "prompt_post_fetch"
   ];
+  ruleHooks = postHooks ++ [ "tool_pre_invoke" ];
+
+  # Inside the container: the key (a sops secret, mounted read-only) and the
+  # pseudonym store (in the gateway's own data directory, 0700).
+  keyPath = "/etc/mcpgateway/pseudonym.key";
+  storePath = "/data/pseudonyms.db";
+  pseudonymConfig = {
+    key_file = keyPath;
+    store_path = storePath;
+    store_ttl_days = cfg.pseudonymTtlDays;
+  };
+
+  # One domain per line; `#` starts a comment.
+  allowDomains =
+    if cfg.allowDomainsFile == null then
+      [ ]
+    else
+      lib.filter (l: l != "") (
+        map (l: lib.trim (lib.head (lib.splitString "#" l))) (
+          lib.splitString "\n" (builtins.readFile cfg.allowDomainsFile)
+        )
+      );
 
   # Operator rules: groups of search-and-replace rules, each group global or
   # scoped to an email's sender/subject. Applied by the scoped_filter plugin
@@ -79,6 +105,15 @@ let
         replace = lib.mkOption {
           type = lib.types.str;
           description = "Replacement text, e.g. a fixed label like [SCHOOL]; `\\1` keeps a group.";
+        };
+        urls = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = ''
+            Whether the rule also applies inside URLs. False for rules on
+            numbers and amounts, which would otherwise cut tracking tokens
+            and article slugs apart.
+          '';
         };
       };
       config.search = lib.mkIf (config.secret != null) (
@@ -163,9 +198,37 @@ let
     groups = map (g: {
       inherit (g) name server;
       when = if g.when == null then null else { inherit (g.when) from subject; };
-      rules = map (r: { inherit (r) search replace; }) g.rules;
+      rules = map (r: {
+        inherit (r) search replace urls;
+        # Only these touch Message-IDs.
+        literal = r.secret != null;
+      }) g.rules;
     }) cfg.ruleGroups;
-  };
+    detectors = {
+      # Hashed even when the allowlist or a machine local part would not.
+      own_domains = cfg.ownDomains ++ map placeholder cfg.ownDomainSecrets;
+      allow_domains = allowDomains;
+      # Numeric, so never inside URLs.
+      custom_patterns = [
+        {
+          name = "no-id";
+          # DDMMYY + 5 digits, optional space; D-numbers add 40 to the day.
+          pattern = "\\b(?:[04][1-9]|[1256]\\d|[37][01])(?:0[1-9]|1[0-2])\\d{2} ?\\d{5}\\b";
+          label = "HASH";
+          urls = false;
+        }
+        {
+          name = "no-phone";
+          # +47 / 0047 with any 8 digits (2-2-2-2 or 3-2-3), or a bare 8-digit
+          # mobile (4x/9x).
+          pattern = "(?<![\\w+])(?:\\+|00)47 ?(?:\\d{2} ?\\d{2} ?\\d{2} ?\\d{2}|\\d{3} ?\\d{2} ?\\d{3})\\b|\\b[49]\\d{7}\\b|\\b[49]\\d{2} \\d{2} \\d{3}\\b";
+          label = "HASH";
+          urls = false;
+        }
+      ];
+    };
+  }
+  // pseudonymConfig;
 
   # One directory of rule files, in filename order.
   loadRules =
@@ -181,6 +244,8 @@ let
   secretsUsed = lib.unique (
     lib.concatMap (g: map (r: r.secret) (lib.filter (r: r.secret != null) g.rules)) cfg.ruleGroups
   );
+  # Everything rendered from sops into the plugin config.
+  configSecrets = lib.unique (secretsUsed ++ cfg.ownDomainSecrets);
 
   # Our plugins, mounted into the image's plugins/ package.
   pluginDir = pkgs.runCommand "contextforge-plugins" { } ''
@@ -189,6 +254,8 @@ let
     cp ${./contextforge/scoped_filter_core.py} "$out/scoped_filter_core.py"
     cp ${./contextforge/llm_detector.py} "$out/llm_detector.py"
     cp ${./contextforge/llm_detector_core.py} "$out/llm_detector_core.py"
+    cp ${./contextforge/pseudonym_core.py} "$out/pseudonym_core.py"
+    cp ${./contextforge/detectors_core.py} "$out/detectors_core.py"
     : > "$out/__init__.py"
   '';
 
@@ -203,7 +270,7 @@ let
     pkgs.runCommand "contextforge-filter-check"
       {
         nativeBuildInputs = [ pkgs.python3 ];
-        config = builtins.replaceStrings (map placeholder secretsUsed) (map standIn secretsUsed) (
+        config = builtins.replaceStrings (map placeholder configSecrets) (map standIn configSecrets) (
           builtins.toJSON filterConfig
         );
         examples = builtins.toJSON (
@@ -231,83 +298,39 @@ let
         cp ${./contextforge/test_scoped_filter.py} test_scoped_filter.py
         cp ${./contextforge/llm_detector_core.py} llm_detector_core.py
         cp ${./contextforge/test_llm_detector.py} test_llm_detector.py
-        CONFIG="$configPath" EXAMPLES="$examplesPath" python3 -m unittest -v test_scoped_filter test_llm_detector
+        cp ${./contextforge/pseudonym_core.py} pseudonym_core.py
+        cp ${./contextforge/test_pseudonym.py} test_pseudonym.py
+        cp ${./contextforge/detectors_core.py} detectors_core.py
+        cp ${./contextforge/test_detectors.py} test_detectors.py
+        CONFIG="$configPath" EXAMPLES="$examplesPath" python3 -m unittest -v \
+          test_scoped_filter test_llm_detector test_pseudonym test_detectors
         touch "$out"
       '';
   plugins = {
-    plugin_settings = {
-      # A plugin error must fail the call, never let the raw result through.
-      fail_on_plugin_error = true;
-      parallel_execution_within_band = false;
-      # One limit for every plugin (cpex 0.1.4 has no per-plugin timeout). The
-      # LLM detector needs minutes for a long search; the regex plugins take
-      # milliseconds, so the higher limit costs them nothing.
-      plugin_timeout = if llmOn then llm.timeout + 15 else 30;
-    };
+    # No `plugin_settings`: cpex 0.1.4 ignores that block and reads the
+    # framework settings from PLUGINS_* environment variables (see the
+    # container's environment below).
     plugins = [
       {
-        # Operator rules first, so their labels are never re-masked below.
+        # Rules, then detectors; the LLM after it sees only what's left.
         name = "ScopedFilter";
         kind = "plugins.custom.scoped_filter.ScopedFilterPlugin";
-        hooks = postHooks;
+        hooks = ruleHooks;
         mode = "enforce";
+        # An error in a call fails the call (cpex's default, stated).
+        on_error = "fail";
         priority = 40;
         config = filterConfig;
       }
-      {
-        name = "PIIFilter";
-        kind = "cpex_pii_filter.PIIFilterPlugin";
-        hooks = postHooks;
-        mode = "enforce";
-        priority = 50;
-        config = {
-          detect_email = true;
-          detect_phone = true; # US and +<cc> formats; Norwegian ones below
-          detect_credit_card = true;
-          detect_bank_account = true; # IBAN and "account <digits>"
-          detect_date_of_birth = true;
-          # Off: US/NL-only formats or English keyword matches that would only
-          # add false positives here.
-          detect_ssn = false;
-          detect_bsn = false;
-          detect_ip_address = false;
-          detect_passport = false;
-          detect_driver_license = false;
-          detect_medical_record = false;
-          # "hash" is the only consistent pseudonym: the same value becomes the
-          # same [HASH:...] token, so the model can still tell two people apart.
-          # The salt is random per process (GUNICORN_WORKERS=1 keeps it to one),
-          # so tokens are stable until the gateway restarts. "tokenize" is a
-          # fresh random token per occurrence, "redact" a fixed string.
-          default_mask_strategy = "hash";
-          redaction_text = "[REDACTED]";
-          block_on_detection = false;
-          # Types and counts only, never the values.
-          log_detections = true;
-          include_detection_details = false;
-          custom_patterns = [
-            {
-              # DDMMYY + 5 digits, optional space; D-numbers add 40 to the day.
-              pattern = "\\b(?:[04][1-9]|[1256]\\d|[37][01])(?:0[1-9]|1[0-2])\\d{2} ?\\d{5}\\b";
-              description = "Norwegian national identity number";
-            }
-            {
-              # +47 / 0047 with any 8 digits, or a bare 8-digit mobile (4x/9x).
-              pattern = "(?:\\+|00)47 ?\\d{2} ?\\d{2} ?\\d{2} ?\\d{2}\\b|\\b[49]\\d{7}\\b|\\b[49]\\d{2} \\d{2} \\d{3}\\b";
-              description = "Norwegian phone number";
-            }
-          ];
-          whitelist_patterns = [ ];
-        };
-      }
     ]
     ++ lib.optional llmOn {
-      # Last, so the model sees only what the regex plugins left: less to
-      # send over the LAN, and less for it to read.
+      # Last, so the model sees only what the rule layer left: less to send
+      # over the LAN, and less for it to read.
       name = "LlmDetector";
       kind = "plugins.custom.llm_detector.LlmDetectorPlugin";
       hooks = [ "tool_post_invoke" ];
       mode = "enforce";
+      on_error = "fail";
       priority = 60;
       # No `conditions`: they can only allow-list, and every tool goes through
       # the model unless excluded. The plugin skips excluded tools itself.
@@ -319,7 +342,12 @@ let
         num_ctx = llm.numCtx;
         keep_alive = llm.keepAlive;
         max_chars = llm.maxChars;
-      };
+        # The user's own values (the literal rules' secrets), so the model
+        # also finds them glued to other words or inflected. Sent to the LLM
+        # host with every request.
+        known_values = map placeholder secretsUsed;
+      }
+      // pseudonymConfig;
     };
   };
 in
@@ -345,7 +373,7 @@ in
       default = [ ];
       description = ''
         Search-and-replace rule groups applied to tool results and rendered
-        prompts before the generic PII filter, for names and patterns it
+        prompts before the generic detectors, for names and patterns it
         can't know. Keep the names themselves out of the repo: use `secret`.
       '';
     };
@@ -430,6 +458,40 @@ in
         description = "Longest text per request; a longer email is split at line breaks.";
       };
     };
+    ownDomains = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ domain ];
+      defaultText = lib.literalExpression "[ config.homelab.domain ]";
+      description = ''
+        E-mail domains that are always hashed, even when the allowlist or a
+        machine local part (noreply@, support@, ...) would keep an address
+        readable. For domains that may appear in the repo.
+      '';
+    };
+    ownDomainSecrets = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "own-domain" ];
+      description = "Like `ownDomains`, as sops keys under `contextforge/` (bare domain values).";
+    };
+    allowDomainsFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Domains (one per line, `#` comments) whose e-mail addresses, and those
+        of their subdomains, are organisations and stay readable. Applies to
+        every server.
+      '';
+    };
+    pseudonymTtlDays = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 180;
+      description = ''
+        Days after its last use that a pseudonym → original entry is
+        deleted. An expired pseudonym in a tool argument passes through
+        unresolved; the next result that contains the value records it again.
+      '';
+    };
     publicPort = lib.mkOption {
       type = lib.types.port;
       default = 8443;
@@ -501,15 +563,27 @@ in
 
     # Root-only; they reach the container through the templates below. The
     # rule secrets are whatever the host's rule files name.
-    sops.secrets = lib.genAttrs (
-      [
-        "contextforge/jwt-secret-key"
-        "contextforge/auth-encryption-secret"
-        "contextforge/admin-password"
-        "contextforge/default-user-password"
-      ]
-      ++ map (s: "contextforge/${s}") secretsUsed
-    ) (_: { });
+    sops.secrets =
+      lib.genAttrs (
+        [
+          "contextforge/jwt-secret-key"
+          "contextforge/auth-encryption-secret"
+          "contextforge/admin-password"
+          "contextforge/default-user-password"
+        ]
+        ++ map (s: "contextforge/${s}") configSecrets
+      ) (_: { })
+      // {
+        # The HMAC key behind every pseudonym: mounted as a file, so it's
+        # never in the environment (`podman inspect` shows that) or a log.
+        # At least 32 bytes; `openssl rand -hex 32`. Changing it changes
+        # every pseudonym and orphans the store's entries.
+        "contextforge/pseudonym-key" = {
+          owner = user;
+          mode = "0400";
+          restartUnits = [ unit ];
+        };
+      };
 
     # Secrets reach the container as an env file podman reads as this user.
     # DEFAULT_USER_PASSWORD is the initial password for accounts created in
@@ -545,6 +619,7 @@ in
         # Our plugin, importable as plugins.custom.scoped_filter next to the
         # image's own plugins/ package.
         "${pluginDir}:/app/plugins/custom:ro"
+        "${config.sops.secrets."contextforge/pseudonym-key".path}:${keyPath}:ro"
       ];
       environmentFiles = [ config.sops.templates."contextforge.env".path ];
       environment = {
@@ -575,6 +650,15 @@ in
         LLMCHAT_ENABLED = "false";
         PLUGINS_ENABLED = "true";
         PLUGINS_CONFIG_FILE = "/etc/mcpgateway/plugins.yaml";
+        # Read from the environment only (cpex 0.1.4 ignores the YAML's
+        # plugin_settings). Without this a plugin that fails to *load* (a
+        # missing key, a bad rule) is skipped and calls run without it; with
+        # it, building the tool's plugin manager fails and so does the call.
+        # Managers are rebuilt per tool every 30 s, so this guards runtime too.
+        PLUGINS_FAIL_ON_PLUGIN_ERROR = "true";
+        # One limit for every plugin (no per-plugin timeout). The LLM detector
+        # needs minutes for a long search; the rule layer takes milliseconds.
+        PLUGINS_PLUGIN_TIMEOUT = toString (if llmOn then llm.timeout + 15 else 30);
         # One worker: one hash salt, so pseudonyms stay consistent (see above).
         GUNICORN_WORKERS = "1";
         LOG_LEVEL = "INFO";

@@ -33,12 +33,18 @@
   # free port works; Caddy and the firewall follow.
   homelab.contextforge.publicPort = 47231;
 
-  # Names and patterns the generic PII filter can't know, replaced in every
+  # Names and patterns the generic detectors can't know, replaced in every
   # tool result before it reaches an AI client. One file per rule group in
   # pii/, applied in filename order; a group can be scoped to a sender or
   # subject (see CONTEXTFORGE.md). Add a name with ./add-pii.sh. This is the
   # global list: people, links, identifiers, amounts, for every server.
   homelab.contextforge.rulesDir = ./pii;
+
+  # E-mail addresses of organisations stay readable (noreply@, support@, ...
+  # and these domains); addresses at your own domains are always hashed:
+  # homelab.domain plus the one in sops.
+  homelab.contextforge.allowDomainsFile = ./pii/allow-domains.txt;
+  homelab.contextforge.ownDomainSecrets = [ "own-domain" ];
 
   # Upstream MCP servers by their gateway id (admin UI → Gateways), each with
   # rules for it alone, run after the global list. Fastmail's are the
