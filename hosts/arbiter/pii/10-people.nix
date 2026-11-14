@@ -60,6 +60,17 @@
       replace = "[EMPLOYER_DOMAIN]";
     }
     {
+      # Safety net for the e-mail rules above: an address whose domain a
+      # domain rule just replaced means its e-mail regex missed it (a local
+      # part or subdomain the regex doesn't allow). Without this the part
+      # before the @ stays readable: leaked.name@[SCHOOL_DOMAIN]. Any
+      # [X_DOMAIN] label becomes [X_EMAIL], local part included. The local
+      # part stops at whitespace, brackets, quotes and URL punctuation, so a
+      # link around it survives.
+      search = "[^\\s<>\"(),;:@\\[\\]/?=&]+@(?:[A-Za-z0-9-]+\\.)*\\[([A-Z_]+)_DOMAIN\\]";
+      replace = "[\\1_EMAIL]";
+    }
+    {
       secret = "employer2"; # Longer and more specific than employer
       replace = "[EMPLOYER]";
     }
@@ -148,6 +159,16 @@
     {
       input = "Deliver to SECRET_HOME_FULL, SECRET_POST_CODE SECRET_HOME_TOWN; works at SECRET_EMPLOYER (SECRET_EMPLOYER_SHORT)";
       expect = "Deliver to [HOME], [POST_CODE] [HOME]; works at [EMPLOYER] ([EMPLOYER_SHORT])";
+    }
+    {
+      # Here the e-mail rules never match (their stand-ins aren't regexes),
+      # so these go through the safety net, as a missed address would.
+      input = "From: Someone <leaked.name@SECRET_SCHOOL_DOMAIN> To: o'neill@elev.SECRET_SCHOOL_DOMAIN, x@SECRET_EMPLOYER_DOMAIN2";
+      expect = "From: Someone <[SCHOOL_EMAIL]> To: [SCHOOL_EMAIL], [EMPLOYER_EMAIL]";
+    }
+    {
+      input = "See SECRET_SCHOOL_DOMAIN or https://www.SECRET_SCHOOL_DOMAIN/a?mail=y@SECRET_SCHOOL_DOMAIN&b=1";
+      expect = "See [SCHOOL_DOMAIN] or https://www.[SCHOOL_DOMAIN]/a?mail=[SCHOOL_EMAIL]&b=1";
     }
   ];
 }
