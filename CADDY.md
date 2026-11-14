@@ -177,8 +177,8 @@ nix run nixpkgs#nixos-rebuild -- switch --flake .#arbiter --target-host admin@ar
 
 What the config does:
 
-- **A `phone` user** that can read `arbiter-alerts` and nothing else. It can't
-  publish. The iOS app logs in with username and password, so this user has a
+- **A `phone` user** that can read `arbiter-alerts` and `claude` and nothing
+  else. It can't publish. The iOS app logs in with username and password, so this user has a
   password hash and no token.
 - **Push through ntfy.sh** (`upstream-base-url`). iOS suspends the app, so only
   Apple push can wake it, and only ntfy.sh can send that for the ntfy app. For
@@ -239,7 +239,9 @@ Install **ntfy** from the App Store, then in the app:
 2. **Settings → Users → Add user:** service URL `https://ntfy.gameforce.me`,
    username `phone`, and the password from 5.1.
 3. **Add subscription:** topic `arbiter-alerts`.
-4. Allow notifications when iOS asks.
+4. **Add subscription:** topic `claude` (Claude's channel; for now, "PR #N
+   opened" for each pull request from a `claude/` branch, tap to open it).
+5. Allow notifications when iOS asks.
 
 WireGuard's **On-Demand** (step 3) is what makes this work away from home.
 

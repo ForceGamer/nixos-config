@@ -20,6 +20,10 @@ in
       auth-access = [
         "upgrade-notifier:arbiter-alerts:write-only"
         "phone:arbiter-alerts:read-only"
+        # Claude's channel. For now merge-test writes to it (pull requests
+        # opened from claude/ branches), with the same token as its alerts.
+        "upgrade-notifier:claude:write-only"
+        "phone:claude:read-only"
       ];
       # iOS suspends the app, so only Apple push can wake it, and only ntfy.sh
       # can send that for the ntfy app. Per message, ntfy.sh gets the message

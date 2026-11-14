@@ -5,6 +5,8 @@
 # activating and cancels it only if the host still looks healthy. It never
 # switches: the boot default stays the last deploy.sh, so a reboot or the
 # weekly upgrade ends the test too. Results go to ntfy (arbiter-alerts).
+# Each poll also announces new pull requests from Claude's branches
+# (claude/*) on the `claude` topic, with the deploy key it already has.
 {
   config,
   lib,
@@ -16,7 +18,10 @@ let
   # A branch of its own instead would keep master to tested commits only.
   branch = "master";
   remote = "git@github.com:ForceGamer/nixos-config.git";
-  ntfy = "http://${config.services.ntfy-sh.settings.listen-http}/arbiter-alerts";
+  ntfyBase = "http://${config.services.ntfy-sh.settings.listen-http}";
+  ntfy = "${ntfyBase}/arbiter-alerts";
+  ntfyClaude = "${ntfyBase}/claude";
+  prUrl = "https://github.com/ForceGamer/nixos-config/pull";
 
   # GitHub's published host key (api.github.com/meta), so the deploy key is
   # only ever offered to GitHub.
@@ -25,11 +30,13 @@ let
   '';
 
   activate = pkgs.callPackage ./activate.nix { systemd = config.systemd.package; };
+  prs = pkgs.callPackage ./prs.nix { };
 
   poll = pkgs.writeShellApplication {
     name = "merge-test";
     runtimeInputs = [
       activate
+      prs
       config.nix.package
       config.systemd.package
       pkgs.coreutils
@@ -43,16 +50,18 @@ let
       repo=$state/repo.git
       export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${knownHosts} -o ConnectTimeout=20"
 
-      # notify PRIORITY TAGS TITLE BODY. The token goes to curl on stdin,
-      # never in argv where /proc would show it.
-      notify() {
-        local token
+      # publish URL PRIORITY TAGS TITLE BODY [CLICK]. The token goes to curl
+      # on stdin, never in argv where /proc would show it.
+      publish() {
+        local token click=()
         token=$(< "$CREDENTIALS_DIRECTORY/token")
+        [ -z "''${6:-}" ] || click=(-H "Click: $6")
         printf 'header = "Authorization: Bearer %s"\n' "$token" \
           | curl --fail --silent --show-error --output /dev/null --config - \
-              -H "Title: $3" -H "Priority: $1" -H "Tags: $2" -d "$4" ${ntfy} \
+              -H "Title: $4" -H "Priority: $2" -H "Tags: $3" "''${click[@]}" -d "$5" "$1" \
           || echo "could not publish to ntfy" >&2
       }
+      notify() { publish ${ntfy} "$@"; }
 
       # Generated here so the private key never leaves ARBITER.
       if [ ! -e "$key" ]; then
@@ -74,6 +83,16 @@ let
       if [ -e "$state/fetch-failing" ]; then
         rm "$state/fetch-failing"
         notify default ok "merge-test fetches ${branch} again" "Watching for merges."
+      fi
+
+      # New pull requests from Claude. Never in the way of testing merges.
+      if opened=$(merge-test-prs "${remote}" "$repo" "$state/last-pr"); then
+        while IFS=$'\t' read -r n subject; do
+          [ -n "$n" ] || continue
+          publish ${ntfyClaude} default memo "PR #$n opened" "$subject" "${prUrl}/$n"
+        done <<<"$opened"
+      else
+        echo "could not check pull requests" >&2
       fi
 
       new=$(git -C "$repo" rev-parse "refs/heads/${branch}")
