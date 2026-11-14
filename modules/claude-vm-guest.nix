@@ -202,6 +202,10 @@ in
     # unlike upstream's `npx ctx7@latest`.
     ctx7
     curl
+    pnpm
+    uv
+    ruff
+    fnm
     gh
     tmux
     t3-pair
