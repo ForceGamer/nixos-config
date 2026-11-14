@@ -197,11 +197,17 @@ in
   environment.localBinInPath = true;
 
   environment.systemPackages = with pkgs; [
+    # Context7's documentation lookup, for the find-docs skill in
+    # ~/.claude/skills. From nixpkgs so it is pinned and updated with the VM,
+    # unlike upstream's `npx ctx7@latest`.
+    ctx7
     curl
     gh
     tmux
     t3-pair
   ];
+  # ctx7 otherwise reports each command to context7.com.
+  environment.variables.CTX7_TELEMETRY_DISABLED = "1";
 
   system.stateVersion = "26.05";
 }
