@@ -27,24 +27,20 @@
       replace = "[EMPLOYER_EMAIL]";
     }
     {
-      secret = "decree-yonder";
-      replace = "[NAME]";
+      secret = "school-email";
+      replace = "[SCHOOL_EMAIL]";
     }
     {
-      secret = "decree-yonder2";
-      replace = "[NAME]";
-    }
-    {
-      secret = "ivy-pork";
-      replace = "[NAME]";
-    }
-    {
-      secret = "first-name";
-      replace = "[NAME]";
+      secret = "school-domain";
+      replace = "[SCHOOL_DOMAIN]";
     }
     {
       secret = "fullname";
       replace = "[FULL_NAME]";
+    }
+    {
+      secret = "first-name";
+      replace = "[NAME]";
     }
     {
       secret = "fullname2";
@@ -83,20 +79,32 @@
       replace = "[EMPLOYER_DOMAIN]";
     }
     {
+      secret = "employer2"; # Longer and more specific than employer
+      replace = "[EMPLOYER]";
+    }
+    {
       secret = "employer";
       replace = "[EMPLOYER]";
     }
     {
-      secret = "employer2";
-      replace = "[EMPLOYER]";
-    }
-    {
-      secret = "employer-short2";
+      secret = "employer-short2"; # Longer and more specific than employer-short
       replace = "[EMPLOYER_SHORT]";
     }
     {
       secret = "employer-short";
       replace = "[EMPLOYER_SHORT]";
+    }
+    {
+      secret = "decree-yonder2"; # Slightly longer than decree-yonder
+      replace = "[NAME]";
+    }
+    {
+      secret = "decree-yonder";
+      replace = "[NAME]";
+    }
+    {
+      secret = "ivy-pork";
+      replace = "[NAME]";
     }
     {
       secret = "home";
