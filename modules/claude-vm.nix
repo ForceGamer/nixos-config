@@ -1,4 +1,6 @@
 # Host side of the Claude Code microVM: a sandbox with internet access only.
+# The one way in besides SSH is T3 Code's server (https://code.<domain>,
+# LAN and WireGuard only), proxied by Caddy here.
 { config, lib, ... }:
 let
   net = {
@@ -7,11 +9,15 @@ let
     host = "10.101.0.1";
     guest = "10.101.0.2";
   };
+  t3 = {
+    port = 3773;
+    host = "code.${config.homelab.domain}";
+  };
 in
 {
   microvm.vms.claude = {
     specialArgs = {
-      inherit net;
+      inherit net t3;
       adminKeys = config.homelab.admin.sshKeys;
     };
     config = ./claude-vm-guest.nix;
@@ -44,6 +50,19 @@ in
         iifname "${net.tap}" ct state established,related return
         iifname "${net.tap}" meta l4proto { tcp, udp } th dport 53 return
         iifname "${net.tap}" drop
+      }
+    '';
+  };
+
+  # T3 Code in the VM, for the desktop and mobile apps. Port 443 only takes
+  # private sources (caddy.nix), so this is LAN and WireGuard only. Pairing
+  # (`t3-pair` in the VM) is what admits a device. Proxying, pairing and the
+  # websocket were tested through Caddy with t3 0.1.9 under this name.
+  services.caddy.virtualHosts.${t3.host} = {
+    useACMEHost = "wildcard";
+    extraConfig = ''
+      reverse_proxy ${net.guest}:${toString t3.port} {
+        flush_interval -1
       }
     '';
   };
