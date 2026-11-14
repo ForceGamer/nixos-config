@@ -266,6 +266,83 @@ cellular with WireGuard on.
 - **The app says login failed:** the password doesn't match the hash in sops.
   Redo 5.1 and deploy again.
 
+## 6. ntfy on the laptop (REVENANT)
+
+What the config does:
+
+- **A `laptop` user** with the same access as `phone`: read `arbiter-alerts`
+  and `claude`, nothing else. The web app logs in per topic with username and
+  password, so it has a password hash and no token.
+- **Web push** (`web-push-*`). The web app registers the browser's push
+  endpoint with ARBITER. ntfy accepts only Google's, Mozilla's, Apple's and
+  Microsoft's push services, and checks that the user can read the topic. Each
+  message goes to that service end-to-end encrypted to the browser, so it
+  shows up with the app closed and away from home without WireGuard. The push
+  service sees timing, size, ARBITER's WAN address and the contact address
+  below; not the content. Opening the web app still needs the LAN or
+  WireGuard.
+- A subscription nobody opens for 55 days gets a "Notifications will be
+  paused" message, and after 60 days it is dropped. Opening the web app
+  renews it.
+
+### 6.1 Secrets
+
+On TEMPLAR, in the repo:
+
+```sh
+nix run --inputs-from . nixpkgs#ntfy-sh -- user hash       # the laptop's password; asks twice
+nix run --inputs-from . nixpkgs#ntfy-sh -- webpush keys    # prints a public and a private key
+sops hosts/arbiter/secrets.yaml
+```
+
+Add these under the existing `ntfy:` key:
+
+```yaml
+ntfy:
+    laptop-hash: <BCRYPT_HASH>
+    web-push-public-key: <PUBLIC_KEY>
+    web-push-private-key: <PRIVATE_KEY>
+    web-push-email: <CONTACT_ADDRESS>
+```
+
+The contact address is the VAPID contact sent to the push services; use one
+you don't mind them seeing. Ignore the `web-push-file` line the key command
+prints; the module sets it. **The build fails until all four keys exist.**
+
+### 6.2 Check after deploy
+
+```sh
+systemctl status ntfy-sh.service
+curl -sS https://ntfy.gameforce.me/config.js | grep web_push_public_key   # not empty
+```
+
+### 6.3 Set up the web app
+
+In Edge or Chrome on the laptop (at home or on WireGuard):
+
+1. Open `https://ntfy.gameforce.me` and install it as an app (the install
+   icon in the address bar).
+2. **Subscribe to topic** `arbiter-alerts`. When it asks for a login, give
+   username `laptop` and the password from 6.1. Then subscribe to `claude`.
+3. **Settings → Background notifications:** enable it, and allow
+   notifications when the browser asks.
+4. So that pushes arrive with the browser closed, keep the browser's
+   "Continue running background apps when closed" setting on (Edge: System and
+   performance; Chrome: System). Firefox receives pushes only while it runs.
+5. Windows' Focus / Do not disturb hides them; allow the app there if needed.
+
+### 6.4 Test
+
+Close the web app, then on ARBITER:
+
+```sh
+sudo systemctl start failure-alert@test.service
+```
+
+If nothing arrives but the message is in the app once opened, look for
+`web push` in `journalctl -u ntfy-sh.service`. A failed push removes the
+subscription; toggle Background notifications off and on to register again.
+
 ### Still open
 
 - **Alerting on fail2ban bans** (open decision 4 in `CLAUDE.md`).
