@@ -67,22 +67,6 @@
       replace = "[CITY]";
     }
     {
-      secret = "employer";
-      replace = "[EMPLOYER]";
-    }
-    {
-      secret = "employer2";
-      replace = "[EMPLOYER]";
-    }
-    {
-      secret = "employer-short";
-      replace = "[EMPLOYER_SHORT]";
-    }
-    {
-      secret = "employer-short2";
-      replace = "[EMPLOYER_SHORT]";
-    }
-    {
       secret = "employer-domain1";
       replace = "[EMPLOYER_DOMAIN]";
     }
@@ -97,6 +81,22 @@
     {
       secret = "employer-domain4";
       replace = "[EMPLOYER_DOMAIN]";
+    }
+    {
+      secret = "employer";
+      replace = "[EMPLOYER]";
+    }
+    {
+      secret = "employer2";
+      replace = "[EMPLOYER]";
+    }
+    {
+      secret = "employer-short2";
+      replace = "[EMPLOYER_SHORT]";
+    }
+    {
+      secret = "employer-short";
+      replace = "[EMPLOYER_SHORT]";
     }
     {
       secret = "home";
