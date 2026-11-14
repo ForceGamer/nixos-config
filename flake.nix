@@ -67,6 +67,12 @@
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
       };
 
+      # merge-test's pull-request announcements, against a local stand-in
+      # for GitHub's refs/pull/N/head.
+      checks.x86_64-linux.merge-test-prs = import ./modules/merge-test/prs-test.nix {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      };
+
       # nixfmt's own wrapper for `nix fmt`; bare nixfmt no longer accepts
       # directories. Anchor the tree root on flake.nix so formatting never
       # wanders outside the repo when it isn't a git checkout.
