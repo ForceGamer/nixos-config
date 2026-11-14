@@ -23,7 +23,15 @@
       replace = "[POST_OFFICE]";
     }
     {
+      secret = "employer-email";
+      replace = "[EMPLOYER_EMAIL]";
+    }
+    {
       secret = "decree-yonder";
+      replace = "[NAME]";
+    }
+    {
+      secret = "decree-yonder2";
       replace = "[NAME]";
     }
     {
@@ -34,7 +42,14 @@
       secret = "first-name";
       replace = "[NAME]";
     }
-
+    {
+      secret = "fullname";
+      replace = "[FULL_NAME]";
+    }
+    {
+      secret = "fullname2";
+      replace = "[FULL_NAME]";
+    }
     {
       secret = "middlename";
       replace = "[MIDDLE_NAME]";
@@ -56,7 +71,15 @@
       replace = "[EMPLOYER]";
     }
     {
+      secret = "employer2";
+      replace = "[EMPLOYER]";
+    }
+    {
       secret = "employer-short";
+      replace = "[EMPLOYER_SHORT]";
+    }
+    {
+      secret = "employer-short2";
       replace = "[EMPLOYER_SHORT]";
     }
     {
