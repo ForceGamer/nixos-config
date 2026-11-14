@@ -20,9 +20,10 @@
     }
     {
       # 16–20 digit runs: parcel tracking numbers and order-line ids. Card
-      # numbers of that length are hashed by the PII filter anyway.
+      # numbers of that length are hashed by the card detector anyway.
       search = "\\b[0-9]{16,20}\\b";
       replace = "[LONG_ID]";
+      urls = false; # numbers in a URL are part of it, not data
     }
     {
       # A label (EN/NO) followed by a 5–30 char alphanumeric token with at
@@ -32,22 +33,26 @@
       # Underscores are part of the token for ids like in_1AbC… (Stripe).
       search = "(?:\\b|(?=(?-i:[A-Z][a-z])))((?:order|ordre|ordrenr|ordrenummer|bestilling(?:snummer|snr)?|purchase order|confirmation|bekreftelse|booking|reservation|reservasjon|reference|referanse|ref|tracking|sporing(?:snummer)?|kolli(?:nummer|nr)?|invoice|faktura(?:nummer|nr)?|receipt|kvittering(?:snummer|snr)?|case|sak(?:snummer|snr)?|ticket)s?(?:\\s*(?:number|nummer|no|nr|num|id|code|kode))?\\.?(?:\\s+(?:er|is))?\\s*(?:[#:*]\\s*)*)(?!\\d{4}-\\d{2}-\\d{2}\\b)(?=[A-Z0-9_-]*\\d)[A-Z0-9][A-Z0-9_-]{4,29}\\b";
       replace = "\\1[ORDER]";
+      urls = false; # numbers in a URL are part of it, not data
     }
     {
       # Voucher codes: a value in themselves (prepaid Wi-Fi, gift codes).
       # Not `voucher=` in a link; shops that need that have their own rule.
       search = "(?:\\b|(?=(?-i:[A-Z][a-z])))(voucher(?:\\s*(?:code|kode|number|nummer|no|nr))?\\.?\\s*(?:[#:*]\\s*)*)(?=[A-Z0-9_-]*\\d)[A-Z0-9][A-Z0-9_-]{4,29}\\b";
       replace = "\\1[VOUCHER]";
+      urls = false; # numbers in a URL are part of it, not data
     }
     {
       # Customer/account numbers after a label.
       search = "\\b((?:kunde|customer|account|konto|member|medlem)s?(?:\\s*(?:number|nummer|no|nr|num|id))?\\.?\\s*(?:[#:*]\\s*)*)[0-9]{4,}\\b";
       replace = "\\1[CUSTOMER_NO]";
+      urls = false; # numbers in a URL are part of it, not data
     }
     {
       # Numeric cells in HTML mail, e.g. order ids in a table.
       search = ">[0-9]+</div>";
       replace = ">[ORDER_ID]</div>";
+      urls = false; # numbers in a URL are part of it, not data
     }
   ];
   examples = [

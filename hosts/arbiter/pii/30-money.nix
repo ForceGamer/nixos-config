@@ -7,6 +7,7 @@
       # Crypto amounts: the number before a ticker, keeping the ticker.
       search = "\\b[0-9]*\\.?[0-9]+(?=\\s+(?:USDG|LTC|BTC)\\b)";
       replace = "[CRYPTO_AMOUNT]";
+      urls = false; # numbers in a URL are part of it, not data
     }
     {
       # Money: a currency sign or code before the number, or kr/NOK/€ after
@@ -16,6 +17,7 @@
       # and the currency may be glued to the next label ("49 NOKVoucher").
       search = "(?:€|\\$|£)\\s?[0-9][0-9 .,]*[0-9]|(?:€|\\$|£)[0-9]|\\b(?:NOK|kr|USD|EUR)\\s?[0-9][0-9 .,]*[0-9]|\\b(?:NOK|kr|USD|EUR)\\s?[0-9]|(?<![0-9.,])[0-9][0-9 .,]*[0-9]\\s?(?:€|kr|NOK)(?:\\b|(?=(?-i:[A-Z][a-z])))|(?<![0-9.,])[0-9]\\s?(?:€|kr|NOK)(?:\\b|(?=(?-i:[A-Z][a-z])))";
       replace = "[AMOUNT]";
+      urls = false; # numbers in a URL are part of it, not data
     }
   ];
   examples = [

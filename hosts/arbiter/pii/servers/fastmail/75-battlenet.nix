@@ -3,7 +3,7 @@
 # so the whole-word name secrets in the people group can't fire on the
 # customer name; the two labels around it can. The invoice number is caught
 # by the global identifiers group once that tolerates a glued label, and the
-# order number in the subject is hashed by the PII filter.
+# order number in the subject is hashed by the phone detector.
 {
   name = "battlenet";
   when = {

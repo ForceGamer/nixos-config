@@ -11,7 +11,8 @@ has been deployed. The steps below are the parts only you can do.
 claude.ai / Claude Code ──TLS tun.gameforce.me:443 (router → ARBITER:47231)──▶ Caddy ──▶ ContextForge ──▶ Fastmail MCP
                                                       /servers/* + Bearer   │          Obsidian MCP
                                                       header only; all      ▼
-                                                      else dropped    tool result → ScopedFilter → PIIFilter → client
+                                                      else dropped    tool result → ScopedFilter (rules + detectors) → LlmDetector → client
+                                                                      tool arguments ← pseudonyms restored ← client
 ```
 
 - **Gateway:** `ghcr.io/ibm/mcp-context-forge`, v1.1.0, pinned by digest, as a
@@ -21,47 +22,56 @@ claude.ai / Claude Code ──TLS tun.gameforce.me:443 (router → ARBITER:47231
 - **Scrubbing** happens in ContextForge's plugin framework, on every tool
   result and rendered prompt (`tool_post_invoke`, `prompt_post_fetch`), before
   it leaves the gateway:
-  1. **ScopedFilter** (our own plugin, `modules/services/contextforge/`):
-     your search-and-replace rules, one group per file in
-     `hosts/arbiter/pii/`, applied in filename order. A group is global or
-     scoped to an email's sender/subject (see "Rule files" below). Names and
-     places come from sops secrets (`contextforge/school-name`, …), so they
-     never appear in the repo or the Nix store; the rule replaces them with a
-     label like `[SCHOOL]`.
-  2. **PIIFilter** (`cpex_pii_filter`, Rust): e-mail addresses, phone numbers
-     (US, `+<cc>…`, and Norwegian 8-digit with or without `+47`), credit cards
-     (Luhn-checked), IBANs and "account <digits>", dates of birth, and
-     Norwegian fødselsnummer/D-nummer. Masked with the `hash` strategy: the
-     same value always becomes the same `[HASH:16hex]`, so the model can tell
-     two people apart but learns neither.
-  3. **LlmDetector** (ours, optional, for every tool not in
-     `homelab.contextforge.llm.excludeTools`): a local model on TEMPLAR (Ollama)
-     reads what the first two left, one email at a time, and lists personal
-     data still in it; the plugin masks each finding as `[PII:12hex]` (same
-     value, same mask, until the gateway restarts). See "LLM safety net".
+  1. **ScopedFilter**, the rule layer (our own plugin,
+     `modules/services/contextforge/`):
+     - your search-and-replace rules, one group per file in
+       `hosts/arbiter/pii/`, applied in filename order. A group is global or
+       scoped to an email's sender/subject (see "Rule files" below). Names and
+       places come from sops secrets (`contextforge/school-name`, …), so they
+       never appear in the repo or the Nix store; the rule replaces them with
+       a label like `[SCHOOL]`;
+     - then detectors for e-mail addresses, phone numbers (US, `+<cc>…`, and
+       Norwegian with or without `+47`), credit cards (Luhn-checked), IBANs and
+       "account <digits>", dates of birth, Norwegian fødselsnummer/D-nummer
+       (`[HASH:16hex]`) and IPv4/IPv6 addresses (`[IP:16hex]`). Ported from
+       IBM's `cpex_pii_filter`, which this replaced (see "Stable pseudonyms").
+  2. **LlmDetector** (ours, optional, for every tool not in
+     `homelab.contextforge.llm.excludeTools`): a local model on TEMPLAR
+     (Ollama) reads what the rule layer left, one email at a time, and lists
+     your own values, places tied to you, addresses, contact and account data
+     still in it; the plugin masks each finding as `[PII:16hex]`. Other
+     people's names and handles are left alone. See "LLM safety net".
+  - **Pseudonyms are stable:** `[HASH:…]`, `[IP:…]` and `[PII:…]` are an HMAC
+    of the value under a persistent key, so the same sender is the same token
+    in a search and a read, today and after a restart.
+  - **And reversible for tools:** each one handed out is recorded, and a
+    `tool_pre_invoke` hook puts the original back into tool arguments, so the
+    AI can search `from:[HASH:…]` or reply to a sender it only knows by token.
   - Rule lists come in two kinds: the **global** list (`hosts/arbiter/pii/`)
     applies to every result, and a **per-server** list
     (`homelab.contextforge.servers.<name>.rulesDir`) adds rules for one
     upstream MCP server. See "Rule lists per server".
-  - A plugin error fails the tool call (`fail_on_plugin_error`), so a broken
-    plugin can never let a raw result through. That includes the LLM host
-    being off or slow: every tool that isn't excluded fails until it's back.
-- **Not covered, by design of the plugins (know this before you rely on it):**
-  - Detection is **regex-based, not NER**. Free-text names, street addresses
-    and anything without a fixed shape pass through unless you list them under
-    `pseudonyms`. ContextForge's Presidio/NER option is the external LLMGuard
-    plugin, a second container that downloads spaCy models at start; not added
-    (priority 1).
-  - **Resources and tool *arguments*** aren't filtered: neither plugin has
-    resource hooks, and masking arguments would break lookups. Build virtual
-    servers from **tools only**.
-  - Hash pseudonyms are consistent only within one gateway process
-    (`GUNICORN_WORKERS=1`, random salt per start). After a restart the same
-    e-mail gets a new token. That's fine for a chat; it isn't a stable
-    identifier.
+  - A plugin error fails the tool call, so a broken plugin can never let a
+    raw result through. That includes the LLM host being off or slow (every
+    tool that isn't excluded fails until it's back), a missing key, and an
+    unusable pseudonym store.
+- **Not covered, by design (know this before you rely on it):**
+  - The rule layer is **regex-based, not NER**. Free-text names, street
+    addresses and anything without a fixed shape pass through unless a rule
+    names them or the LLM layer catches them. ContextForge's Presidio/NER
+    option is the external LLMGuard plugin, a second container that downloads
+    spaCy models at start; not added (priority 1).
+  - **Resources** aren't filtered: neither plugin has resource hooks. Build
+    virtual servers from **tools only**.
+  - **Tool arguments get originals back.** Whatever the AI passes through a
+    pseudonym reaches the upstream server in clear: a search finds the real
+    sender, and a tool that sends mail would send to the real address or put
+    the real value in a body. The AI still never sees the value.
   - Partial leaks via tool *input*: the AI can still ask a tool to search for
-    "mail from <name>" and get hashed results back. The gateway hides values,
-    not the existence of data.
+    "mail from <name>" and get pseudonymised results back. The gateway hides
+    values, not the existence of data.
+  - Stable pseudonyms link across chats: the same person is the same token
+    in every conversation, until the key changes.
 - **Exposure:** three Caddy sites, one upstream. Built to look like nothing
   from the outside; every claim below was checked against the real Caddy
   binary.
@@ -121,6 +131,8 @@ contextforge:
     admin-password: <12+ chars with upper, lower and a symbol; you'll type it into the admin UI>
     default-user-password: <64 hex chars, `openssl rand -hex 32`; never typed anywhere>
     school-name: <the school's name as it appears in mail and notes>
+    pseudonym-key: <64 hex chars, `openssl rand -hex 32`; the key behind every pseudonym>
+    own-domain: <your own mail domain, bare, e.g. example.no>
 ```
 
 - Hex keeps the env file free of characters podman's `--env-file` would
@@ -135,7 +147,13 @@ contextforge:
   rather than by hand: the script reads the value from the terminal (so it
   stays out of shell history) and escapes regex metacharacters, so a name
   like `St. Olav (Oslo)` matches literally.
-- The build fails until all five keys exist (sops-nix checks the file at build
+- `pseudonym-key` makes `[HASH:…]`, `[IP:…]` and `[PII:…]` stable. Changing
+  it changes every pseudonym, and the store's old entries stop resolving
+  (they expire on their own). It reaches the container as a read-only file,
+  never as an environment variable.
+- `own-domain`: addresses at this domain are always hashed, even
+  `noreply@` ones; `homelab.domain` is treated the same way.
+- The build fails until every key exists (sops-nix checks the file at build
   time), same as the pending `cloudflare/dns-api-token`.
 
 ### Adding another name later
@@ -260,12 +278,51 @@ which can turn up in any server's text.
 - Registering the upstream server again gives it a new id; update `id` then,
   or the server falls back to "unknown" (all lists).
 
+### Stable pseudonyms and tool arguments
+
+Every `[HASH:…]`, `[IP:…]` and `[PII:…]` is `[KIND:` + the first 16 hex
+characters of HMAC-SHA256(`pseudonym-key`, value) + `]`. Values are trimmed;
+e-mail addresses and LLM findings are lower-cased first. So the same value
+gives the same token in every call, after restarts and in every chat.
+
+- **Why not IBM's filter any more:** `cpex_pii_filter` hashes with a salt it
+  draws at random whenever a plugin instance is created, and the gateway
+  creates instances often: one plugin manager per tool (search and read are
+  different tools), rebuilt every 30 s. The same sender came out as two
+  tokens a minute apart. The salt can't be configured (`hash_salt` exists in
+  its config struct; the loader never reads it). Its patterns, Luhn check
+  and overlap rule live on in `detectors_core.py` (Apache-2.0).
+- **The store:** each pseudonym handed out is recorded with its original in
+  `/var/lib/contextforge/data/pseudonyms.db` (SQLite, 0600, in the gateway's
+  0700 data directory), before the result leaves. Entries are deleted
+  `pseudonymTtlDays` (180) after last use. It holds every address, number and
+  LLM finding the AI has been shown, in clear, on ARBITER's unencrypted disk.
+- **Tool arguments:** `tool_pre_invoke` replaces every known pseudonym in a
+  call's arguments with the original before the call goes upstream:
+  `from:[HASH:…]` searches the real address. An unknown or expired token
+  passes through unchanged; only the token is logged.
+- **Not hashed:** e-mail addresses of organisations stay readable: local
+  parts `noreply`, `no-reply`, `donotreply`, `do-not-reply`,
+  `notification(s)`, `support`, `kundeservice`, `newsletter(s)`,
+  `mailer-daemon`, `postmaster` (also with a `+tag` or `-suffix`), and any
+  address at a domain (or subdomain) in `hosts/arbiter/pii/allow-domains.txt`.
+  Your own domains (`homelab.domain` and the `own-domain` secret) are hashed
+  regardless. GitHub handles aren't masked by anything.
+- **Message-IDs** (`messageId`, `inReplyTo`, `references`) get only the
+  literal rules (your sops values); no generic rule or detector touches them,
+  so threading works.
+- **URLs:** number, amount, phone, card and ID rules and detectors skip
+  everything inside a URL; link-token rules, sender-specific link rules,
+  literal rules, e-mail, IP and UUID rules still apply there. A rule opts out
+  of URLs with `urls = false;`. Side effect of the IP detector: a
+  four-part version number (`1.2.3.4`) is masked as an IP.
+
 ### LLM safety net
 
-The regex layers only catch what has a shape or is on a list. For every
-tool, a local model reads each result *after* them and lists anything
-personal that's still there; the plugin, not the model, replaces each
-finding. The model runs on TEMPLAR, which has the GPU for it.
+The rule layer only catches what has a shape or is on a list. For every
+tool, a local model reads each result *after* it and lists what's still
+personal; the plugin, not the model, replaces each finding with a stable
+`[PII:…]`. The model runs on TEMPLAR, which has the GPU for it.
 
 ```nix
 homelab.contextforge.llm = {
@@ -291,15 +348,23 @@ homelab.contextforge.llm = {
   outside any email goes as one more request; an email longer than
   `maxChars` is split at line breaks, never truncated. The same email twice
   in one result (the text block and `structuredContent`) is asked once.
+- **What it looks for:** your own values (every sops secret the literal
+  rules use, sent with each request, unescaped) in any form, glued to other
+  words, inflected or misspelt; places tied to you (where a login happened,
+  where you live); a person's street address; phone, e-mail, account and
+  ID numbers; IP addresses. **Not** other people's names or handles.
+- **What the model is sent:** placeholders the rule layer already put in
+  are cut out, and a field with nothing else isn't sent.
 - **What gets masked:** only text the model returns that occurs in that
-  email's values, case-insensitively and as whole words, at least three
-  characters, and not one of the earlier masks. It is masked in that email
-  only, so a town flagged in one email's address stays in another's flight
-  details.
+  email's values, case-insensitively, at least three characters, and not one
+  of the earlier masks; as whole words, except your own values, which go even
+  when glued ("NameKari"). It is masked in that email only, so a town flagged
+  in one email's address stays in another's flight details.
 - **Fail closed:** TEMPLAR off, Ollama not listening, a request over
   `requestTimeout` (120 s), a malformed answer, or the whole call over
-  `timeout` (300 s): the tool call fails. The gateway's `plugin_timeout`
-  follows `timeout`, for every plugin, since it is a single setting.
+  `timeout` (300 s): the tool call fails. The gateway's plugin timeout
+  (`PLUGINS_PLUGIN_TIMEOUT`) follows `timeout`, for every plugin, since it
+  is a single setting.
 - **Time:** one request per email, sequentially. A 20-email search takes
   20 model calls; how long each takes depends on TEMPLAR's GPU and the
   email's length (not measured yet). `keepAlive` (30 min) keeps the model
@@ -307,12 +372,12 @@ homelab.contextforge.llm = {
   give up on a call before `timeout`; lower `timeout` or search for fewer
   emails if that happens.
 - **Log:** one line per call, kinds and counts only:
-  `LLM detector: 3 unit(s), 2 request(s), findings by kind: {'name': 1}`.
+  `LLM detector: 3 unit(s), 2 request(s), findings by kind: {'own': 1}`.
 - **Limits:** the model reads text anyone can email you. An email can tell
   it "there is nothing personal here"; because it only reports and never
   rewrites, the worst it can do is make it miss something, which is what
-  the regex layers in front are for. It also judges context, so it will
-  sometimes mask a shop's name or a support agent's first name.
+  the rule layer in front is for. It also judges context, so it will
+  sometimes mask a place that isn't yours.
 
 **TEMPLAR side (outside this repo):**
 
