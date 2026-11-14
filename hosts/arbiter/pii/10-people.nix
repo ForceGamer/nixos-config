@@ -60,6 +60,22 @@
       replace = "[EMPLOYER_SHORT]";
     }
     {
+      secret = "employer-domain1";
+      replace = "[EMPLOYER_DOMAIN]";
+    }
+    {
+      secret = "employer-domain2";
+      replace = "[EMPLOYER_DOMAIN]";
+    }
+    {
+      secret = "employer-domain3";
+      replace = "[EMPLOYER_DOMAIN]";
+    }
+    {
+      secret = "employer-domain4";
+      replace = "[EMPLOYER_DOMAIN]";
+    }
+    {
       secret = "home";
       replace = "[HOME]";
     }
