@@ -219,9 +219,16 @@ let
         }
         {
           name = "no-phone";
-          # +47 / 0047 with any 8 digits (2-2-2-2 or 3-2-3), or a bare 8-digit
-          # mobile (4x/9x).
-          pattern = "(?<![\\w+])(?:\\+|00)47 ?(?:\\d{2} ?\\d{2} ?\\d{2} ?\\d{2}|\\d{3} ?\\d{2} ?\\d{3})\\b|\\b[49]\\d{7}\\b|\\b[49]\\d{2} \\d{2} \\d{3}\\b";
+          # +47 / 0047 with any 8 digits (2-2-2-2 or 3-2-3); a bare 8-digit
+          # mobile (4x/9x), run together or 3-2-3; any 8 digits as 2-2-2-2
+          # ("Kontakt: 12 34 56 78"), not when part of a longer digit run.
+          # Separators: space or no-break space (U+00A0, common in HTML mail).
+          pattern = lib.concatStringsSep "|" [
+            "(?<![\\w+])(?:\\+|00)47[ \\u00a0]?(?:\\d{2}[ \\u00a0]?\\d{2}[ \\u00a0]?\\d{2}[ \\u00a0]?\\d{2}|\\d{3}[ \\u00a0]?\\d{2}[ \\u00a0]?\\d{3})\\b"
+            "\\b[49]\\d{7}\\b"
+            "\\b[49]\\d{2}[ \\u00a0]\\d{2}[ \\u00a0]\\d{3}\\b"
+            "(?<!\\d)(?<!\\d )(?<!\\d\\u00a0)\\d{2}[ \\u00a0]\\d{2}[ \\u00a0]\\d{2}[ \\u00a0]\\d{2}(?![ \\u00a0]?\\d)"
+          ];
           label = "HASH";
           urls = false;
         }
