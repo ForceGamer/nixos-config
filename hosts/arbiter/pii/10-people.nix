@@ -36,6 +36,10 @@
       replace = "[SCHOOL_EMAIL]";
     }
     {
+      secret = "family-email1";
+      replace = "[FAMILY_EMAIL]";
+    }
+    {
       secret = "school-domain";
       replace = "[SCHOOL_DOMAIN]";
     }
@@ -76,7 +80,7 @@
       replace = "[SCHOOL]";
     }
     {
-      secret = "fullname";
+      secret = "fullname"; # Longer and more specific than fullname2
       replace = "[FULL_NAME]";
     }
     {
@@ -85,6 +89,14 @@
     }
     {
       secret = "decree-yonder2"; # Slightly longer than decree-yonder
+      replace = "[NAME]";
+    }
+    {
+      secret = "family-name1";
+      replace = "[NAME]";
+    }
+    {
+      secret = "family-name2";
       replace = "[NAME]";
     }
     {
