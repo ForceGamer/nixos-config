@@ -19,6 +19,13 @@
     nvidiaPersistenced = true;
   };
 
+  # A driver bump can't swap the loaded kernel module without a reboot, and a
+  # restarted daemon of the new version refuses the old module ("API
+  # mismatch"), fails, and makes every switch, test and merge-test report a
+  # failed unit. The running daemon matches the loaded module, so keep it; the
+  # next boot starts the new one.
+  systemd.services.nvidia-persistenced.restartIfChanged = false;
+
   # Userspace driver libraries in /run/opengl-driver (CUDA, NVENC/NVDEC).
   hardware.graphics.enable = true;
 
