@@ -35,6 +35,11 @@ Apply Ockham's razor throughout. Prefer the boring, documented NixOS way over cl
 - **nixpkgs:** `nixos-unstable` since 2026-11-14 (the user's choice; was `nixos-26.05`). Unstable takes breaking changes at any time, not once per release: when bumping the lock, read the new entries in the pinned nixpkgs' `nixos/doc/manual/release-notes/rl-<next>.section.md` and fix every removed or renamed option the build reports. Don't move back to a stable channel unless the user asks, and never below the current release (a downgrade can break state that services already migrated).
 - **Flake inputs:** only `nixpkgs`, `disko`, `sops-nix` and `microvm`. Ask before adding any input, and explain why a nixpkgs module can't do the job. Make every input follow `nixpkgs` where possible.
 - **Verify options against the pinned nixpkgs, not memory.** Options get renamed and removed between releases. Check with `nix eval`, the module source in the pinned nixpkgs, or search.nixos.org set to the matching release.
+- **Look up upstream docs with Context7, not memory.** Do this for any software's own configuration, API or CLI: Caddy, ntfy, ContextForge, podman, systemd, lego, sops, Python libraries and so on. Use the `find-docs` skill: `ctx7 library <name> "<query>"`, then `ctx7 docs <id> "<query>"`.
+  - Context7 indexes upstream, usually the latest release. When versions matter, check the version nixpkgs pins and use a version-specific ID; where the two disagree, the pinned package's source wins.
+  - NixOS options still come from the pinned nixpkgs (rule above).
+  - Queries go to context7.com: no PII, hostnames, domains or secrets in them.
+  - In the microVM, `ctx7` is on PATH and the skill is in `~/.claude/skills`. On TEMPLAR there is no skill: run `CTX7_TELEMETRY_DISABLED=1 nix run nixpkgs#ctx7 -- …`, if the sandbox's domain allowlist lets `context7.com` through (not verified).
 - **Services (later phases):**
   - Prefer native NixOS modules.
   - Use OCI containers (podman via `virtualisation.oci-containers`) only when no module exists, with images pinned by digest.
