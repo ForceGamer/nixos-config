@@ -65,6 +65,23 @@
     model = "oamazonasgabriel/qwen3.6-35b-a3b:q4-24gbGPU";
   };
 
+  # Another LAN device behind the wildcard certificate; like every Caddy site
+  # on 443, reachable from the LAN and WireGuard only. Its address must stay
+  # put: reserve it in UniFi. The device serves HTTPS with a self-signed
+  # certificate, so the hop from here is encrypted but not authenticated.
+  # Caddy (since 2.11) sends the upstream's own address as Host on HTTPS
+  # upstreams, so the device sees requests as if browsed directly.
+  services.caddy.virtualHosts."files.${config.homelab.domain}" = {
+    useACMEHost = "wildcard";
+    extraConfig = ''
+      reverse_proxy https://192.168.1.152:9443 {
+        transport http {
+          tls_insecure_skip_verify
+        }
+      }
+    '';
+  };
+
   homelab.admin = {
     name = "admin";
     sshKeys = [
