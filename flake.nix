@@ -12,11 +12,6 @@
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # nixpkgs can run containers but has no module for declarative VMs.
-    microvm = {
-      url = "github:microvm-nix/microvm.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs =
@@ -25,7 +20,6 @@
       nixpkgs,
       disko,
       sops-nix,
-      microvm,
     }:
     {
       nixosConfigurations.arbiter = nixpkgs.lib.nixosSystem {
@@ -34,7 +28,6 @@
         modules = [
           disko.nixosModules.disko
           sops-nix.nixosModules.sops
-          microvm.nixosModules.host
           ./hosts/arbiter
         ];
       };

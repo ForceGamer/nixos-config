@@ -42,7 +42,8 @@ Everything else needs you to be at home or on the VPN.
 - **Firewall:** ARBITER accepts TCP 443 only from private IPv4 sources (home
   LAN, WireGuard peers in `10.100.0.0/24`). This holds on the host itself: a
   UniFi port forward keeps the public source address, so even an accidental
-  forward of 443 would be dropped. The Claude microVM still can't reach it.
+  forward of 443 would be dropped. The `agent` user on ARBITER can't reach it
+  either (`modules/t3-code.nix`).
 
 ## 1. Create a Cloudflare API token
 
