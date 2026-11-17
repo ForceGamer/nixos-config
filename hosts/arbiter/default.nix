@@ -13,7 +13,7 @@
     ../../modules/failure-alert.nix
     ../../modules/merge-test
     ../../modules/wireguard.nix
-    ../../modules/claude-vm.nix
+    ../../modules/t3-code.nix
     ../../modules/fail2ban.nix
     ../../modules/services/caddy.nix
     ../../modules/services/ntfy.nix
