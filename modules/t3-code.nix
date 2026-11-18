@@ -81,6 +81,7 @@ let
     config.homelab.contextforge.publicPort # Caddy: public MCP endpoint
     2586 # ntfy (ntfy.nix)
     4444 # ContextForge (contextforge.nix)
+    15630 # Bichon (bichon.nix): the whole mail archive
   ];
 in
 {

@@ -18,6 +18,7 @@
     ../../modules/services/caddy.nix
     ../../modules/services/ntfy.nix
     ../../modules/services/contextforge.nix
+    ../../modules/services/bichon.nix
   ];
 
   networking.hostName = "arbiter";
@@ -64,6 +65,10 @@
     # A personal upload on ollama.com, not the official library; unpinned.
     model = "oamazonasgabriel/qwen3.6-35b-a3b:q4-24gbGPU";
   };
+
+  # The NAS (the same device as files.<domain> below). Bichon's backups go to
+  # this share; export it to ARBITER only (BICHON.md).
+  homelab.bichon.backupNfs = "192.168.1.152:/volume1/Email";
 
   # Another LAN device behind the wildcard certificate; like every Caddy site
   # on 443, reachable from the LAN and WireGuard only. Its address must stay

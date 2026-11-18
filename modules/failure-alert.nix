@@ -14,6 +14,9 @@ let
     "acme-order-renew-wildcard"
     # Reports its own results; this covers the script itself crashing.
     "merge-test"
+    # Bichon's newest backup on the NAS is too old, or the NAS is unreachable.
+    # Daily until fixed, including before the backup is first set up.
+    "bichon-backup-check"
   ];
 in
 {
