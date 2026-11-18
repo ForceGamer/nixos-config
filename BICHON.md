@@ -61,9 +61,13 @@ folder:
 
 - **Host:** ARBITER's LAN address only, not a subnet.
 - **Access:** read/write.
-- **Squash:** map all users to one NAS account that can write the folder.
-  This way ARBITER's uids don't need to exist on the NAS, and root on
-  ARBITER is not root on the share.
+- **Squash:** "Map all users to admin". Every request from ARBITER, root
+  included, then reaches the NAS as its admin account. That account is
+  limited to this share, which NFS exports to ARBITER only. Bichon's uid
+  doesn't exist on the NAS, so "No mapping" and "Map root to …" leave it
+  unable to write; "No mapping" would also make root on ARBITER root on the
+  share. "Map all users to guest" needs guest enabled with write access,
+  which SMB would then share.
 - **Version:** NFSv4 (the mount asks for v4 and takes the highest minor
   version the NAS offers).
 
