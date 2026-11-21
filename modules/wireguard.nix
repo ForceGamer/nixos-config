@@ -15,7 +15,7 @@ let
       address = "10.100.0.2/32";
     };
     laptop = {
-      publicKey = "<LAPTOP_WG_PUBKEY>";
+      publicKey = "o8t4C7S92x3q0ldXZFq5RWvvm64y6e5AF7PqnN3ybg4=";
       address = "10.100.0.3/32";
     };
   };
