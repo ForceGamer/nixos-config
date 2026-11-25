@@ -76,11 +76,16 @@ in
     # backup run waits for it (a hard mount, the default: a write is never
     # silently dropped), and the daily check below reports it. Upstream warns
     # against live data on NFS; only the backups go here.
+    # NFSv3 because the UGOS NAS serves no v4: it answers a v4 mount, but with
+    # "No such file or directory" for the export. nolock keeps locks local:
+    # NFSv3 locking (NLM/statd) needs the NAS to call back into ARBITER
+    # through the firewall, and only ARBITER uses the share.
     fileSystems.${nasDir} = {
       device = cfg.backupNfs;
       fsType = "nfs";
       options = [
-        "nfsvers=4"
+        "nfsvers=3"
+        "nolock"
         "noauto"
         "x-systemd.automount"
         "x-systemd.idle-timeout=10min"
