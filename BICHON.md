@@ -68,8 +68,9 @@ folder:
   unable to write; "No mapping" would also make root on ARBITER root on the
   share. "Map all users to guest" needs guest enabled with write access,
   which SMB would then share.
-- **Version:** NFSv4 (the mount asks for v4 and takes the highest minor
-  version the NAS offers).
+- **Version:** NFSv3, the only version UGOS serves. ARBITER mounts with
+  `nfsvers=3,nolock`. A v4 mount fails with "reason given by server: No such
+  file or directory" even though `showmount -e` lists the export.
 
 Nothing else on ARBITER mounts the share, and the rule allows no other host.
 After deploying, check from ARBITER:
