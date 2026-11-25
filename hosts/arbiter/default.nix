@@ -8,6 +8,7 @@
     ../../modules/users.nix
     ../../modules/ssh.nix
     ../../modules/networking.nix
+    ../../modules/unfree.nix
     ../../modules/nvidia.nix
     ../../modules/auto-upgrade.nix
     ../../modules/failure-alert.nix
@@ -19,6 +20,7 @@
     ../../modules/services/ntfy.nix
     ../../modules/services/contextforge.nix
     ../../modules/services/bichon.nix
+    ../../modules/services/hermes
   ];
 
   networking.hostName = "arbiter";
@@ -65,6 +67,10 @@
     # A personal upload on ollama.com, not the official library; unpinned.
     model = "oamazonasgabriel/qwen3.6-35b-a3b:q4-24gbGPU";
   };
+
+  # Hermes' models and Hindsight's embeddings on TEMPLAR's Ollama, the one LAN
+  # host the hermes user may reach. Same reservation as the LLM filter above.
+  homelab.hermes.ollama.address = "192.168.1.145";
 
   # The NAS (the same device as files.<domain> below). Bichon's backups go to
   # this share; export it to ARBITER only (BICHON.md).
