@@ -1,7 +1,7 @@
 # Proprietary NVIDIA driver for ARBITER's GTX 980 Ti (Maxwell), headless.
 # No X server: putting "nvidia" in videoDrivers is just how the nixpkgs module
 # is switched on; services.xserver itself stays disabled.
-{ lib, ... }:
+{ ... }:
 {
   services.xserver.videoDrivers = [ "nvidia" ];
 
@@ -29,12 +29,10 @@
   # Userspace driver libraries in /run/opengl-driver (CUDA, NVENC/NVDEC).
   hardware.graphics.enable = true;
 
-  # Allow only the driver's own unfree packages, not unfree software in general.
-  nixpkgs.config.allowUnfreePredicate =
-    pkg:
-    builtins.elem (lib.getName pkg) [
-      "nvidia-x11"
-      "nvidia-kernel-modules"
-      "nvidia-persistenced"
-    ];
+  # The driver's own unfree packages (unfree.nix).
+  homelab.unfreePackages = [
+    "nvidia-x11"
+    "nvidia-kernel-modules"
+    "nvidia-persistenced"
+  ];
 }

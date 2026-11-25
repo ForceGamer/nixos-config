@@ -12,6 +12,14 @@
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Not in nixpkgs; upstream's flake carries the package and a hardened
+    # NixOS module (the user's choice over packaging it here, 2026-11-21).
+    # Its own inputs (flake-parts, home-manager, uv2nix, pyproject-nix,
+    # pyproject-build-systems) come along in the lock, all on our nixpkgs.
+    hermes-agent = {
+      url = "github:NousResearch/hermes-agent";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -20,6 +28,7 @@
       nixpkgs,
       disko,
       sops-nix,
+      hermes-agent,
     }:
     {
       nixosConfigurations.arbiter = nixpkgs.lib.nixosSystem {
